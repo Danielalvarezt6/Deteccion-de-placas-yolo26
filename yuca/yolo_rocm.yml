@@ -1,0 +1,23 @@
+name: yolo-rocm
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.26.0,<2.2.0
+  - scipy
+  - matplotlib
+  - pillow
+  - pyyaml
+  - scikit-learn
+  - pip:
+      - opencv-python-headless
+      - albumentations
+      - ultralytics
+      - onnx
+      - onnxslim
+      - onnxruntime
+      - --index-url https://download.pytorch.org/whl/rocm6.2
+      - torch
+      - torchvision
