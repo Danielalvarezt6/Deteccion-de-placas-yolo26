@@ -1,6 +1,6 @@
 # Radar Vial · Detección de Placas e Infracciones (YOLO26 + ONNX)
 
-*Integrantes del equipo: Daniel Álvarez Terrazas y Melina González Méndez*
+*Integrantes del equipo: Daniel Alvarez Terrazas y Melina González Méndez*
 
 
 Sistema de detección de matrículas vehiculares, lectura OCR de placas mexicanas, estimación de velocidad y generación de boletas de infracción en PDF. Incluye el flujo de entrenamiento de **YOLO26** en clúster HPC con GPUs AMD ROCm y la aplicación web/móvil 100% en navegador lista para desplegar en **Netlify**.
