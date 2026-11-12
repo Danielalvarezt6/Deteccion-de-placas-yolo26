@@ -1,5 +1,8 @@
 # Radar Vial · Detección de Placas e Infracciones (YOLO26 + ONNX)
 
+*Integrantes del equipo: Daniel Álvarez Terrazas y Melina González Méndez*
+
+
 Sistema de detección de matrículas vehiculares, lectura OCR de placas mexicanas, estimación de velocidad y generación de boletas de infracción en PDF. Incluye el flujo de entrenamiento de **YOLO26** en clúster HPC con GPUs AMD ROCm y la aplicación web/móvil 100% en navegador lista para desplegar en **Netlify**.
 
 ---
@@ -10,6 +13,7 @@ El modelo detector de matrículas fue entrenado con el dataset público **TENAX-
 - **Enlace del dataset:** https://universe.roboflow.com/fernandos-workspace-ovm5c/tenax-lpr/dataset/4
 
 ---
+
 
 ## Estructura del Proyecto
 
