@@ -1,0 +1,5 @@
+# Archivos que se ejecutan en el clúster Linux: siempre con saltos de línea UNIX (LF)
+*.slurm text eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.py    text eol=lf

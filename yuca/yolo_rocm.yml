@@ -12,12 +12,16 @@ dependencies:
   - pyyaml
   - scikit-learn
   - pip:
+      # PyTorch para GPUs AMD (ROCm 7.2, igual que el módulo rocm/7.2.2 del clúster).
+      # Las versiones van fijas (==...+rocm7.2) para que pip NUNCA las cambie por la versión NVIDIA
+      # de PyPI al instalar ultralytics. --extra-index-url (no --index-url) para que el resto
+      # de paquetes se siga buscando en PyPI.
+      - --extra-index-url https://download.pytorch.org/whl/rocm7.2
+      - torch==2.14.1+rocm7.2
+      - torchvision==0.29.1+rocm7.2
       - opencv-python-headless
       - albumentations
       - ultralytics
       - onnx
       - onnxslim
       - onnxruntime
-      - --index-url https://download.pytorch.org/whl/rocm6.2
-      - torch
-      - torchvision

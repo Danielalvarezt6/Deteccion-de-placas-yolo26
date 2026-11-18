@@ -1325,13 +1325,16 @@
     const CONFIG = {
       modelPaths: ["./best.onnx", "./yuca/best.onnx", "../yuca/best.onnx", "./models/best.onnx"],
       inputSize: 640,
-      confThreshold: 0.38,
+      // Umbral elegido con la curva F1 del modelo entrenado con TENAX-LPR v2 + data augmentation
+      // (F1 máx. 0.98 en conf 0.70). Menos falsas placas => menos multas por error.
+      confThreshold: 0.6,
       iouThreshold: 0.5,
       plateWidthM: 0.40,       // ancho físico aproximado de una placa (m)
       hfovDeg: 60,             // campo de visión horizontal supuesto de la cámara
       trackTTL: 1200,          // ms que una placa sigue viva sin nuevas detecciones
       minHitsShow: 1,          // mostrar la placa desde la primera detección válida
-      minHitsTicket: 2,        // detecciones necesarias para poder multar
+      minHitsTicket: 3,        // detecciones necesarias para poder multar
+      speedToleranceKmh: 5,    // margen sobre el límite antes de multar (compensa el temblor de las cajas)
       speedWindowS: 2.0,
       minSpeedSpanS: 0.35,
       minOcrWidthPx: 20,
@@ -1379,28 +1382,95 @@
     /* =========================================================
        Modelo YOLO26 en un Web Worker (no bloquea la interfaz)
        ========================================================= */
+    // Worker genérico de ONNX Runtime: intenta la GPU del teléfono/PC (WebGPU, ~10x más rápido)
+    // y si no hay o falla, usa CPU (WebAssembly). Se usa para el detector YOLO y para el OCR,
+    // así ninguno de los dos congela la pantalla.
     const WORKER_SRC = [
-      "importScripts('" + ORT_CDN + "ort.min.js');",
+      "importScripts('" + ORT_CDN + "ort.webgpu.min.js');",
       "ort.env.wasm.wasmPaths = '" + ORT_CDN + "';",
-      "ort.env.wasm.numThreads = 1;",
+      "ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;",
       "let session = null;",
+      "const mk = (w) => new ort.Tensor(w.type, w.type === 'uint8' ? new Uint8Array(w.dims.reduce((a, b) => a * b, 1)) : new Float32Array(w.dims.reduce((a, b) => a * b, 1)), w.dims);",
+      "async function create(buffer, ep, warm) {",
+      "  const s = await ort.InferenceSession.create(buffer.slice(0), { executionProviders: [ep], graphOptimizationLevel: 'all' });",
+      "  if (warm) await s.run({ [s.inputNames[0]]: mk(warm) });", // valida que el proveedor realmente funcione
+      "  return s;",
+      "}",
       "self.onmessage = async (e) => {",
       "  const m = e.data;",
       "  try {",
       "    if (m.type === 'init') {",
-      "      session = await ort.InferenceSession.create(m.buffer, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });",
-      "      self.postMessage({ type: 'ready' });",
+      "      let ep = 'wasm';",
+      "      if (self.navigator && navigator.gpu && m.gpu !== false) {",
+      "        try { session = await create(m.buffer, 'webgpu', m.warmup); ep = 'webgpu'; } catch (err) { session = null; }",
+      "      }",
+      "      if (!session) session = await create(m.buffer, 'wasm', m.warmup);",
+      "      self.postMessage({ type: 'ready', ep, inputNames: session.inputNames, outputNames: session.outputNames });",
       "    } else if (m.type === 'run') {",
-      "      const t = new ort.Tensor('float32', m.data, [1, 3, m.size, m.size]);",
-      "      const out = await session.run({ [session.inputNames[0]]: t });",
-      "      const o = out[session.outputNames[0]];",
-      "      self.postMessage({ type: 'result', id: m.id, data: o.data, dims: o.dims });",
+      "      const feeds = {};",
+      "      for (const k in m.feeds) { const f = m.feeds[k]; feeds[k] = new ort.Tensor(f.type, f.data, f.dims); }",
+      "      const out = await session.run(feeds);",
+      "      const res = {}, transfer = [];",
+      "      for (const k of session.outputNames) { const o = out[k]; res[k] = { data: o.data, dims: o.dims }; transfer.push(o.data.buffer); }",
+      "      self.postMessage({ type: 'result', id: m.id, outputs: res }, transfer);",
       "    }",
       "  } catch (err) {",
       "    self.postMessage({ type: 'error', id: m.id, message: String((err && err.message) || err) });",
       "  }",
       "};"
     ].join("\n");
+
+    // Sesión de ONNX que vive en un worker pero se usa igual que ort.InferenceSession: s.run({ nombre: tensor })
+    class WorkerSession {
+      static create(buffer, warmup, label) {
+        return new Promise((resolve, reject) => {
+          let worker;
+          try {
+            worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+          } catch (err) { reject(err); return; }
+          const ws = new WorkerSession();
+          ws.worker = worker;
+          ws.pending = new Map();
+          ws.seq = 0;
+          worker.onmessage = (e) => {
+            const m = e.data;
+            if (m.type === "ready") {
+              ws.inputNames = m.inputNames;
+              ws.outputNames = m.outputNames;
+              ws.ep = m.ep;
+              console.info(`${label || "ONNX"}: ${m.ep === "webgpu" ? "GPU (WebGPU)" : "CPU (WebAssembly)"}`);
+              resolve(ws);
+            } else {
+              const p = ws.pending.get(m.id);
+              if (p) {
+                ws.pending.delete(m.id);
+                m.type === "result" ? p.resolve(m.outputs) : p.reject(new Error(m.message));
+              } else if (m.type === "error") {
+                worker.terminate();
+                reject(new Error(m.message));
+              }
+            }
+          };
+          worker.onerror = (e) => { worker.terminate(); reject(e); };
+          const copy = buffer.slice(0);
+          worker.postMessage({ type: "init", buffer: copy, warmup }, [copy]);
+        });
+      }
+      run(feeds) {
+        const id = ++this.seq;
+        const msg = {}, transfer = [];
+        for (const k in feeds) {
+          const t = feeds[k];
+          msg[k] = { type: t.type, data: t.data, dims: t.dims };
+          transfer.push(t.data.buffer);
+        }
+        return new Promise((resolve, reject) => {
+          this.pending.set(id, { resolve, reject });
+          this.worker.postMessage({ type: "run", id, feeds: msg }, transfer);
+        });
+      }
+      terminate() { this.worker.terminate(); }
+    }
 
     // Memoria del navegador: guarda los .onnx elegidos a mano para cargarlos solos la próxima vez
     const modelStore = {
@@ -1483,39 +1553,20 @@
           resolve();
         };
 
-        let worker;
-        try {
-          worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
-        } catch {
-          fallback();
-          return;
-        }
-
-        worker.onmessage = (e) => {
-          const m = e.data;
-          if (m.type === "ready" && !settled) {
+        const S = CONFIG.inputSize;
+        WorkerSession.create(buffer, { type: "float32", dims: [1, 3, S, S] }, "Detector YOLO26")
+          .then((ws) => {
+            if (settled) { ws.terminate(); return; }
             settled = true;
-            state.model.worker = worker;
+            state.model.worker = ws;
             state.model.ready = true;
-            setModelState("ready", "YOLO26 listo");
+            setModelState("ready", ws.ep === "webgpu" ? "YOLO26 listo · GPU" : "YOLO26 listo");
             resolve();
-          } else if (m.type === "result" || m.type === "error") {
-            const p = state.model.pending.get(m.id);
-            if (p) {
-              state.model.pending.delete(m.id);
-              m.type === "result" ? p.resolve(m) : p.reject(new Error(m.message));
-            } else if (m.type === "error" && !settled) {
-              worker.terminate();
-              fallback();
-            }
-          }
-        };
-        worker.onerror = () => {
-          worker.terminate();
-          fallback();
-        };
-        const copy = buffer.slice(0);
-        worker.postMessage({ type: "init", buffer: copy }, [copy]);
+          })
+          .catch((err) => {
+            console.warn("Detector en worker no disponible:", err);
+            fallback();
+          });
       });
     }
 
@@ -1529,7 +1580,9 @@
           ocrPool.customBuffer = buf;
           ocrPool.initPromise = null;
           ocrPool.engine = null;
+          if (ocrPool.fast && ocrPool.fast.terminate) ocrPool.fast.terminate();
           ocrPool.fast = null;
+          ocrPool.fastFmt = null;
           ocrPool.workers = [];
           getOcrWorkerSlot();
           notify("Modelo OCR de placas cargado y guardado.", "info", 3500);
@@ -1546,11 +1599,9 @@
     function runModel(data) {
       const size = CONFIG.inputSize;
       if (state.model.worker) {
-        const id = ++state.model.seq;
-        return new Promise((resolve, reject) => {
-          state.model.pending.set(id, { resolve, reject });
-          state.model.worker.postMessage({ type: "run", id, data, size }, [data.buffer]);
-        });
+        const ws = state.model.worker;
+        return ws.run({ [ws.inputNames[0]]: new ort.Tensor("float32", data, [1, 3, size, size]) })
+          .then((out) => out[ws.outputNames[0]]);
       }
       const tensor = new ort.Tensor("float32", data, [1, 3, size, size]);
       const s = state.model.session;
@@ -1663,10 +1714,13 @@
         const w = bx2 - bx1;
         const h = by2 - by1;
         if (w < vw * 0.015 || h < 6) return;
+        // Filtros de forma/tamaño/contraste: pensados para descartar defensas o sombras. Con el modelo
+        // entrenado con TENAX-LPR v2 + augmentation (0 falsas en test con conf 0.6) se relajaron para
+        // no tirar placas reales vistas de lado, de cerca o con poco contraste (sol, autos plateados).
         const ar = w / h;
-        if (ar < 1.25 || ar > 6.5) return;
-        if (w > vw * 0.38 || h > vh * 0.22) return;
-        if (!hasPlateContrast(bx1, by1, bx2, by2)) return;
+        if (ar < 1.0 || ar > 6.5) return;
+        if (w > vw * 0.5 || h > vh * 0.3) return;
+        if (conf < 0.8 && !hasPlateContrast(bx1, by1, bx2, by2)) return;
         out.push({ x1: bx1, y1: by1, x2: bx2, y2: by2, conf });
       };
 
@@ -1873,7 +1927,7 @@
       for (const tr of state.tracks) {
         if (!tr.confirmed || !tr.speedReady || tr.ticketed) continue;
         if (tr.hits < CONFIG.minHitsTicket) continue;
-        if (tr.speed > state.limit) {
+        if (tr.speed > state.limit + CONFIG.speedToleranceKmh) {
           if (!tr.pendingTicket) {
             tr.pendingTicket = true;
             tr.evidence = captureEvidence(tr);
@@ -1888,12 +1942,23 @@
     /* =========================================================
        OCR de placas (Tesseract en worker + recorte de franja central)
        ========================================================= */
-    const ocrPool = { workers: [], busy: [false], initPromise: null, engine: null, fast: null, tess: null, fastFails: 0, fastFloat: false };
+    const ocrPool = { workers: [], busy: [false], initPromise: null, engine: null, fast: null, tess: null, fastFails: 0, fastFmt: null };
     const PLATE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
 
     async function loadFastPlateModel() {
       ort.env.wasm.wasmPaths = ORT_CDN;
-      const make = (buf) => ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
+      // OCR en un worker (GPU si hay) para que leer placas no congele el video.
+      // Si los workers no están disponibles, se usa el hilo principal como antes.
+      const make = async (buf) => {
+        try {
+          return await WorkerSession.create(buf, { type: "uint8", dims: [1, 64, 128, 3] }, "OCR de placas");
+        } catch (e1) {
+          try { return await WorkerSession.create(buf, null, "OCR de placas"); } catch (e2) {
+            console.warn("OCR en worker no disponible, uso hilo principal:", e2);
+            return ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
+          }
+        }
+      };
       if (ocrPool.customBuffer) {
         try { return await make(ocrPool.customBuffer.slice(0)); } catch (e) { console.warn("OCR placas: archivo elegido inválido", e); }
       }
@@ -1969,33 +2034,45 @@
       const g = new Uint8Array(W * H);
       for (let i = 0; i < g.length; i++) g[i] = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) | 0;
 
+      // El modelo cct_s_v1_global espera la placa a color (uint8, [1, 64, 128, 3]); otros modelos de
+      // fast-plate-ocr la esperan en gris o en float. Se prueba cada formato una vez y se recuerda el que funciona.
+      let lo = 0, span = 255;
       if (opts.stretch) {
         const hist = new Array(256).fill(0);
         for (let i = 0; i < g.length; i++) hist[g[i]]++;
-        let acc = 0, lo = 0, hi = 255;
+        let acc = 0, hi = 255;
         for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= g.length * 0.02) { lo = i; break; } }
         acc = 0;
         for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= g.length * 0.02) { hi = i; break; } }
-        const span = Math.max(30, hi - lo);
-        for (let i = 0; i < g.length; i++) g[i] = Math.max(0, Math.min(255, ((g[i] - lo) * 255) / span));
+        span = Math.max(30, hi - lo);
       }
-
-      const name = s.inputNames[0];
-      const runFloat = () => {
-        const f = new Float32Array(g.length);
-        for (let i = 0; i < f.length; i++) f[i] = g[i] / 255;
-        return s.run({ [name]: new ort.Tensor("float32", f, [1, H, W, 1]) });
-      };
-      let out;
-      if (ocrPool.fastFloat) {
-        out = await runFloat();
-      } else {
-        try {
-          out = await s.run({ [name]: new ort.Tensor("uint8", g, [1, H, W, 1]) });
-        } catch (e) {
-          out = await runFloat();
-          ocrPool.fastFloat = true;
+      const level = (v) => Math.max(0, Math.min(255, ((v - lo) * 255) / span)) | 0;
+      const FORMATS = [
+        { type: "uint8", c: 3 }, { type: "uint8", c: 1 }, { type: "float32", c: 3 }, { type: "float32", c: 1 }
+      ];
+      const build = (fmt) => {
+        const n = W * H;
+        const arr = fmt.type === "uint8" ? new Uint8Array(n * fmt.c) : new Float32Array(n * fmt.c);
+        const k = fmt.type === "uint8" ? 1 : 1 / 255;
+        for (let i = 0; i < n; i++) {
+          if (fmt.c === 1) arr[i] = level(g[i]) * k;
+          else for (let ch = 0; ch < 3; ch++) arr[i * 3 + ch] = level(px[i * 4 + ch]) * k;
         }
+        return new ort.Tensor(fmt.type, arr, [1, H, W, fmt.c]);
+      };
+      const name = s.inputNames[0];
+      let out;
+      if (ocrPool.fastFmt != null) {
+        out = await s.run({ [name]: build(FORMATS[ocrPool.fastFmt]) });
+      } else {
+        let lastErr;
+        for (let f = 0; f < FORMATS.length && !out; f++) {
+          try {
+            out = await s.run({ [name]: build(FORMATS[f]) });
+            ocrPool.fastFmt = f;
+          } catch (e) { lastErr = e; }
+        }
+        if (!out) throw lastErr;
       }
 
       // Toma la salida de caracteres (los modelos v2 traen además una salida de región)
@@ -2520,8 +2597,13 @@
     const easeOut = (x) => 1 - Math.pow(1 - x, 3);
 
     function drawTrack(tr, rect, now) {
-      if (!tr.disp) tr.disp = { ...tr.box };
-      for (const k of ["x1", "y1", "x2", "y2"]) tr.disp[k] += (tr.box[k] - tr.disp[k]) * 0.35;
+      // Entre una detección y la siguiente, la caja se mueve con la velocidad estimada de la placa
+      // (predicción), así sigue al auto con fluidez en lugar de ir a saltos detrás de él.
+      const ahead = video.paused ? 0 : Math.max(0, Math.min(0.4, video.currentTime - tr.lastT));
+      const ox = tr.vx * ahead, oy = tr.vy * ahead;
+      const target = { x1: tr.box.x1 + ox, y1: tr.box.y1 + oy, x2: tr.box.x2 + ox, y2: tr.box.y2 + oy };
+      if (!tr.disp) tr.disp = { ...target };
+      for (const k of ["x1", "y1", "x2", "y2"]) tr.disp[k] += (target[k] - tr.disp[k]) * 0.5;
 
       const appear = easeOut(Math.min(1, (now - tr.confirmedAt) / 280));
       const stale = now - tr.lastSeen;
@@ -2529,7 +2611,7 @@
       const alpha = appear * fade;
       if (alpha <= 0.01) return;
 
-      const violating = state.infractions && tr.speedReady && tr.speed > state.limit;
+      const violating = state.infractions && tr.speedReady && tr.speed > state.limit + CONFIG.speedToleranceKmh;
       const color = violating ? "#fb7185" : tr.plate ? "#34d399" : "#22d3ee";
 
       let x1 = rect.x + tr.disp.x1 * rect.s, y1 = rect.y + tr.disp.y1 * rect.s;

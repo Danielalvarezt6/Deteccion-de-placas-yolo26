@@ -6,20 +6,32 @@ from ultralytics import YOLO
 
 os.environ["YOLO_OFFLINE"] = "true"
 
-BASE_DIR = Path("/lustre/home/estudiante_02/YOLO")
-if not BASE_DIR.exists():
-    BASE_DIR = Path(__file__).resolve().parent.parent
+# Carpeta base: la que contiene datasets/. En el clúster es la misma carpeta de yolo.py
+# (p. ej. /lustre/home/<usuario>/YOLO); en el repo es la raíz (yuca/..). Se puede forzar con BASE_DIR.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if os.environ.get("BASE_DIR"):
+    BASE_DIR = Path(os.environ["BASE_DIR"])
+elif (_SCRIPT_DIR / "datasets").exists():
+    BASE_DIR = _SCRIPT_DIR
+else:
+    BASE_DIR = _SCRIPT_DIR.parent
 
-DATASET_DIR = BASE_DIR / "TENAX-LPR.v4i.yolo26"
-MODEL_WEIGHTS = str(BASE_DIR / "yolo26n.pt") if (BASE_DIR / "yolo26n.pt").exists() else "yolo26n.pt"
+# Dataset generado por entrenamiento/preparar_dataset.py (TENAX-LPR v2 + data augmentation)
+DATASET_DIR = Path(os.environ.get("DATASET_DIR", BASE_DIR / "datasets" / "TENAX-LPR-aug"))
+# Modelo base: yolo26n (rápido en el celular) o MODEL=yolo26s.pt (más preciso con placas pequeñas, ~3x más lento)
+MODEL_NAME = os.environ.get("MODEL", "yolo26n.pt")
+MODEL_WEIGHTS = str(BASE_DIR / MODEL_NAME) if (BASE_DIR / MODEL_NAME).exists() else MODEL_NAME
 DATA_YAML = str(DATASET_DIR / "data.yaml")
 PROJECT_DIR = str(BASE_DIR / "runs" / "tenax_lpr")
-RUN_NAME = "yolo26_placas"
+# Cada modelo/experimento en su propia carpeta para no sobrescribir resultados anteriores
+RUN_NAME = os.environ.get("RUN_NAME", f"{Path(MODEL_NAME).stem}_placas")
 
 IMG_SIZE = 640
-BATCH_SIZE = 64
-EPOCHS = 120
-WORKERS = 8
+# En el clúster (2x MI210) se usa batch=64; en una laptop (p.ej. RTX 3050 6GB) usar BATCH=16 y AMP=1
+BATCH_SIZE = int(os.environ.get("BATCH", 64))
+EPOCHS = int(os.environ.get("EPOCHS", 120))
+WORKERS = int(os.environ.get("WORKERS", 8))
+AMP = os.environ.get("AMP", "0") == "1"
 
 
 def normalize_polygon_labels_to_boxes(dataset_root: Path) -> None:
@@ -62,18 +74,35 @@ def normalize_polygon_labels_to_boxes(dataset_root: Path) -> None:
             cache_file.unlink()
 
 
+def fix_data_yaml_path(dataset_root: Path) -> None:
+    """El data.yaml se genera en Windows con una ruta absoluta; la reescribe a la ruta real
+    del dataset en esta máquina (p. ej. /lustre/home/.../datasets/TENAX-LPR-aug)."""
+    yaml_file = dataset_root / "data.yaml"
+    if not yaml_file.exists():
+        raise FileNotFoundError(
+            f"No existe {yaml_file}. Genera el dataset con entrenamiento/preparar_dataset.py "
+            "y súbelo a esta ruta (o define DATASET_DIR)."
+        )
+    lines = yaml_file.read_text(encoding="utf-8").splitlines()
+    lines = [l for l in lines if not l.startswith("path:")]
+    lines.insert(0, f"path: {dataset_root.resolve().as_posix()}")
+    yaml_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
     print(f"[INFO] PyTorch: {torch.__version__} | HIP (ROCm): {getattr(torch.version, 'hip', None)}")
 
     if not torch.cuda.is_available():
         raise RuntimeError(
-            "PyTorch no detecta las GPUs MI210. "
-            "Ejecuta: pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2"
+            "PyTorch no detecta ninguna GPU (MI210 con ROCm o NVIDIA con CUDA). "
+            "Ejecuta: pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2"
         )
 
     device = 0
+    print(f"[INFO] Dataset: {DATASET_DIR}")
     print(f"[INFO] GPU activa: {torch.cuda.get_device_name(0)} (Total visibles: {torch.cuda.device_count()})")
 
+    fix_data_yaml_path(DATASET_DIR)
     normalize_polygon_labels_to_boxes(DATASET_DIR)
 
     model = YOLO(MODEL_WEIGHTS)
@@ -87,9 +116,15 @@ if __name__ == "__main__":
         workers=WORKERS,
         project=PROJECT_DIR,
         name=RUN_NAME,
-        patience=25,
+        # La validación tiene pocas imágenes y las métricas oscilan: más paciencia antes de parar
+        patience=40,
         cos_lr=True,
-        amp=False,
+        amp=AMP,
+        # El dataset ya trae aumento offline (blur, noche, lluvia, ruido, perspectiva);
+        # se mantiene el aumento en línea de Ultralytics pero SIN volteos (la placa quedaría en espejo).
+        mosaic=1.0,
+        close_mosaic=15,
+        degrees=0.0,
         fliplr=0.0,
         flipud=0.0,
         exist_ok=True,
@@ -101,7 +136,16 @@ if __name__ == "__main__":
         shutil.copy(best_weights, BASE_DIR / "license_plate_detector.pt")
 
         best_model = YOLO(str(best_weights))
-        best_model.val(data=DATA_YAML, imgsz=IMG_SIZE, conf=0.5, device=device)
+        # Evaluación final: valid (usado para elegir best.pt) y test (imágenes que el modelo nunca vio).
+        # El conjunto test es la cifra honesta para reportar.
+        resumen = []
+        for split in ("val", "test"):
+            m = best_model.val(data=DATA_YAML, split=split, imgsz=IMG_SIZE, device=device,
+                               project=PROJECT_DIR, name=f"{RUN_NAME}_{split}", exist_ok=True, plots=True)
+            resumen.append((split, m.box.mp, m.box.mr, m.box.map50, m.box.map))
+        print("\n[RESULTADOS]  split   precision  recall  mAP50  mAP50-95")
+        for split, p, r, m50, m5095 in resumen:
+            print(f"[RESULTADOS]  {split:5s}  {p:9.3f}  {r:6.3f}  {m50:5.3f}  {m5095:8.3f}")
         onnx_file = best_model.export(format="onnx", imgsz=IMG_SIZE, simplify=True, dynamic=False, device="cpu")
         if onnx_file and Path(onnx_file).exists():
             shutil.copy(onnx_file, BASE_DIR / "best.onnx")
