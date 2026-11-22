@@ -14,7 +14,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet" />
 
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
   <style>
@@ -551,11 +550,11 @@
     .plate.unknown { color: #64748b; letter-spacing: 0.02em; font-size: 0.8rem; }
 
     .toast-crop {
-      width: 72px;
-      height: 36px;
+      width: 88px;
+      height: 40px;
       border-radius: 8px;
-      object-fit: cover;
-      background: #000;
+      object-fit: contain;
+      background: #0b0d12;
       border: 1px solid rgba(255, 255, 255, 0.15);
       flex-shrink: 0;
     }
@@ -902,6 +901,7 @@
       border-radius: 14px;
       background: var(--surface-2);
       border: 1px solid var(--line);
+      flex-shrink: 0;
       animation: itemIn 300ms var(--ease-out) both;
       transition: border-color 220ms var(--ease-out), background-color 220ms var(--ease-out);
     }
@@ -912,11 +912,11 @@
     }
 
     .feed-thumb {
-      width: 74px;
+      width: 82px;
       height: 38px;
       border-radius: 8px;
-      object-fit: cover;
-      background: #000;
+      object-fit: contain;
+      background: #0b0d12;
       flex-shrink: 0;
     }
 
@@ -949,6 +949,7 @@
       background: var(--surface-2);
       border: 1px solid rgba(251, 113, 133, 0.3);
       overflow: hidden;
+      flex-shrink: 0;
       animation: itemIn 340ms var(--ease-out) both;
     }
 
@@ -1304,10 +1305,18 @@
           </summary>
           <div class="settings-body">
             <div>
+              <div class="settings-row"><span>Distancia zona radar</span><strong id="zoneMetersOut">12 m</strong></div>
+              <input type="range" id="zoneMetersInput" min="4" max="40" step="1" value="12" />
+            </div>
+            <div>
               <div class="settings-row"><span>Calibración de velocidad</span><strong id="calibOut">×1.0</strong></div>
               <input type="range" id="calibInput" min="0.4" max="2.5" step="0.1" value="1" />
             </div>
-            <div>La velocidad se estima por el tamaño y el movimiento de la placa en el video. Si las velocidades se ven muy altas o muy bajas, ajusta este valor.</div>
+            <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px">
+              <span>Solo leer placas en autos con exceso</span>
+              <input type="checkbox" id="onlySpeedingInput" />
+            </label>
+            <div>Pipeline 3 modelos ONNX: <b>yolo26n.onnx</b> (vehículos y velocidad) → <b>best.onnx</b> (placa en recorte) → <b>cct_s_v2_global.onnx</b> (OCR).</div>
             <label class="btn" style="height:38px;font-size:0.8rem">
               Cargar modelos .onnx
               <input type="file" id="modelInput2" accept=".onnx" multiple hidden />
@@ -1323,27 +1332,51 @@
        Configuración
        ========================================================= */
     const CONFIG = {
+      // Modelo 1: detector de vehículos COCO (car=2, motorcycle=3, bus=5, truck=7)
+      vehicleModelPaths: ["./yolo26n.onnx", "./models/yolo26n.onnx", "./yuca/yolo26n.onnx", "../yuca/yolo26n.onnx"],
+      vehicleConfThreshold: 0.35,
+      vehicleIouThreshold: 0.45,
+      vehicleClasses: {
+        2: { name: "Auto", widthM: 1.80 },
+        3: { name: "Moto", widthM: 0.75 },
+        5: { name: "Autobús", widthM: 2.55 },
+        7: { name: "Camión", widthM: 2.45 }
+      },
+      // Modelo 2: detector de placas (corre sobre el recorte del vehículo)
       modelPaths: ["./best.onnx", "./yuca/best.onnx", "../yuca/best.onnx", "./models/best.onnx"],
       inputSize: 640,
       // Umbral elegido con la curva F1 del modelo entrenado con TENAX-LPR v2 + data augmentation
       // (F1 máx. 0.98 en conf 0.70). Menos falsas placas => menos multas por error.
       confThreshold: 0.6,
+      plateCropConfThreshold: 0.35, // sobre recorte del vehículo la placa es más grande (cubre también tomas en picada/4K)
       iouThreshold: 0.5,
-      plateWidthM: 0.40,       // ancho físico aproximado de una placa (m)
+      // Zona cercana donde el vehículo ya tiene tamaño suficiente para leer la placa (compatible con 4K gran angular)
+      nearZoneMinWidthRatio: 0.04,
+      nearZoneMinBottomRatio: 0.35,
+      plateSearchIntervalMs: 220,
+      // Estimación de velocidad estilo Ultralytics SpeedEstimator (líneas de control + escala real)
+      radarLine1Ratio: 0.56,
+      radarLine2Ratio: 0.80,
+      radarZoneMeters: 12,
+      maxSpeedKmh: 220,
+      plateWidthM: 0.40,       // ancho físico aproximado de una placa (m) (modo respaldo sin yolo26n)
       hfovDeg: 60,             // campo de visión horizontal supuesto de la cámara
-      trackTTL: 1200,          // ms que una placa sigue viva sin nuevas detecciones
-      minHitsShow: 1,          // mostrar la placa desde la primera detección válida
-      minHitsTicket: 3,        // detecciones necesarias para poder multar
+      trackTTL: 1200,          // ms que un vehículo sigue vivo sin nuevas detecciones
+      minHitsShow: 1,          // mostrar el vehículo desde la primera detección válida
+      minHitsTicket: 5,        // detecciones necesarias para poder multar
       speedToleranceKmh: 5,    // margen sobre el límite antes de multar (compensa el temblor de las cajas)
       speedWindowS: 2.0,
-      minSpeedSpanS: 0.35,
+      minSpeedSpanS: 0.30,
       minOcrWidthPx: 20,
-      // OCR de placas: modelo ONNX (fast-plate-ocr). Si no se encuentra, se usa Tesseract como respaldo.
-      plateOcrPaths: ["./cct_s_v1_global.onnx", "./yuca/cct_s_v1_global.onnx", "../yuca/cct_s_v1_global.onnx", "./models/cct_s_v1_global.onnx"],
+      // Modelo 3: OCR de placas ONNX (fast-plate-ocr v2 prioritario, v1 como respaldo)
+      plateOcrPaths: [
+        "./cct_s_v2_global.onnx", "./models/cct_s_v2_global.onnx", "./yuca/cct_s_v2_global.onnx",
+        "./cct_s_v1_global.onnx", "./models/cct_s_v1_global.onnx", "./yuca/cct_s_v1_global.onnx"
+      ],
       snapsPerTrack: 5,        // mejores recortes (por nitidez) que se guardan de cada placa
       maxOcrReads: 8,          // tandas máximas de OCR por placa
       plateDoneScore: 250,     // puntaje de votos a partir del cual la lectura se da por buena
-      minFastPlateWidthPx: 30, // placas más angostas que esto (en píxeles del video) ni se intentan leer
+      minFastPlateWidthPx: 22, // placas más angostas que esto (en píxeles del video) ni se intentan leer
       plateSureConf: 0.85      // confianza media a partir de la cual se deja de insistir en una placa
     };
 
@@ -1359,6 +1392,10 @@
     prepCanvas.width = prepCanvas.height = CONFIG.inputSize;
     const prepCtx = prepCanvas.getContext("2d", { willReadFrequently: true });
 
+    const platePrepCanvas = document.createElement("canvas");
+    platePrepCanvas.width = platePrepCanvas.height = CONFIG.inputSize;
+    const platePrepCtx = platePrepCanvas.getContext("2d", { willReadFrequently: true });
+
     const state = {
       source: null,             // { kind: 'file' | 'camera', label }
       stream: null,
@@ -1367,7 +1404,10 @@
       infractions: false,
       limit: 60,
       calib: 1,
-      model: { ready: false, worker: null, session: null, busy: false, pending: new Map(), seq: 0 },
+      zoneMeters: CONFIG.radarZoneMeters,
+      onlySpeedingPlates: false,
+      vehicleModel: { ready: false, worker: null, session: null, busy: false, ep: null },
+      model: { ready: false, worker: null, session: null, busy: false, pending: new Map(), seq: 0, ep: null },
       cropCycle: 0,
       lastInferAt: 0,
       lastVideoTime: 0,
@@ -1378,6 +1418,8 @@
       stats: { vehicles: 0, plates: 0 },
       lastFeedRefresh: 0
     };
+
+    const isCascadeMode = () => state.vehicleModel.ready;
 
     /* =========================================================
        Modelo YOLO26 en un Web Worker (no bloquea la interfaz)
@@ -1513,28 +1555,40 @@
       $("modelText").textContent = text;
     }
 
-    async function initModel() {
-      setModelState("loading", "Cargando modelo…");
-      for (const path of CONFIG.modelPaths) {
+    function updateModelPill() {
+      const m1 = state.vehicleModel.ready;
+      const m2 = state.model.ready;
+      const m3 = ocrPool.engine === "fast";
+      const gpu = state.vehicleModel.ep === "webgpu" || state.model.ep === "webgpu";
+      const tag = gpu ? " · GPU" : "";
+      if (m1 && m2 && m3) {
+        setModelState("ready", `3/3 modelos${tag}`);
+      } else if (m1 && m2) {
+        setModelState("ready", `Vehículos + Placas${tag}`);
+      } else if (m2) {
+        setModelState("ready", `Placas listo${tag}`);
+      } else if (m1) {
+        setModelState("ready", `Vehículos listo${tag}`);
+      } else {
+        setModelState("missing", "Cargar modelos .onnx");
+      }
+    }
+
+    async function fetchFirstModel(paths) {
+      for (const path of paths) {
         try {
           const res = await fetch(path);
           if (!res.ok) continue;
           if ((res.headers.get("content-type") || "").includes("text/html")) continue;
           const buffer = await res.arrayBuffer();
           if (buffer.byteLength < 100000) continue;
-          await startDetector(buffer);
-          return;
+          return buffer;
         } catch {}
       }
-      const cached = await modelStore.get("yolo");
-      if (cached) {
-        await startDetector(cached.slice(0));
-        return;
-      }
-      setModelState("missing", "Cargar modelos .onnx");
+      return null;
     }
 
-    function startDetector(buffer) {
+    function startYoloSlot(target, buffer, label) {
       return new Promise((resolve) => {
         let settled = false;
         const fallback = async () => {
@@ -1542,35 +1596,57 @@
           settled = true;
           try {
             ort.env.wasm.wasmPaths = ORT_CDN;
-            state.model.session = await ort.InferenceSession.create(buffer, { executionProviders: ["wasm"] });
-            state.model.worker = null;
-            state.model.ready = true;
-            setModelState("ready", "YOLO26 listo");
+            target.session = await ort.InferenceSession.create(buffer, { executionProviders: ["wasm"] });
+            target.worker = null;
+            target.ep = "wasm";
+            target.ready = true;
           } catch (err) {
-            console.error(err);
-            setModelState("missing", "Modelo inválido");
+            console.error(label, err);
+            target.ready = false;
           }
-          resolve();
+          updateModelPill();
+          resolve(target.ready);
         };
 
         const S = CONFIG.inputSize;
-        WorkerSession.create(buffer, { type: "float32", dims: [1, 3, S, S] }, "Detector YOLO26")
+        WorkerSession.create(buffer, { type: "float32", dims: [1, 3, S, S] }, label)
           .then((ws) => {
             if (settled) { ws.terminate(); return; }
             settled = true;
-            state.model.worker = ws;
-            state.model.ready = true;
-            setModelState("ready", ws.ep === "webgpu" ? "YOLO26 listo · GPU" : "YOLO26 listo");
-            resolve();
+            target.worker = ws;
+            target.session = null;
+            target.ep = ws.ep;
+            target.ready = true;
+            updateModelPill();
+            resolve(true);
           })
           .catch((err) => {
-            console.warn("Detector en worker no disponible:", err);
+            console.warn(`${label} en worker no disponible:`, err);
             fallback();
           });
       });
     }
 
-    // Acepta uno o varios .onnx a la vez: los que se llaman cct/ocr/plate son el OCR de placas; el resto, el detector YOLO
+    async function initModel() {
+      setModelState("loading", "Cargando modelos…");
+      const [vehBuf, plateBuf] = await Promise.all([
+        fetchFirstModel(CONFIG.vehicleModelPaths).then((b) => b || modelStore.get("vehicle")),
+        fetchFirstModel(CONFIG.modelPaths).then((b) => b || modelStore.get("yolo"))
+      ]);
+      const tasks = [];
+      if (vehBuf) tasks.push(startYoloSlot(state.vehicleModel, vehBuf.slice(0), "Modelo 1 · Vehículos (yolo26n)"));
+      if (plateBuf) tasks.push(startYoloSlot(state.model, plateBuf.slice(0), "Modelo 2 · Placas (best.onnx)"));
+      await Promise.all(tasks);
+      updateModelPill();
+      if (!state.vehicleModel.ready && state.model.ready) {
+        console.info("Modo 2 modelos: carga yolo26n.onnx para activar el tracking de vehículos y radar de velocidad.");
+      }
+    }
+
+    // Acepta uno o varios .onnx a la vez:
+    // - cct/ocr/plate_read -> Modelo 3 (OCR: cct_s_v2_global.onnx)
+    // - yolo26/yolo11/yolov8/coco/vehic -> Modelo 1 (Vehículos: yolo26n.onnx)
+    // - resto (ej. best.onnx) -> Modelo 2 (Detector de placas)
     async function loadModelFile(fileList) {
       const files = Array.from(fileList || []).filter(Boolean);
       for (const file of files) {
@@ -1584,38 +1660,56 @@
           ocrPool.fast = null;
           ocrPool.fastFmt = null;
           ocrPool.workers = [];
-          getOcrWorkerSlot();
-          notify("Modelo OCR de placas cargado y guardado.", "info", 3500);
+          await getOcrWorkerSlot();
+          updateModelPill();
+          notify(`Modelo 3 (OCR: ${file.name}) cargado y guardado.`, "info", 3500);
+        } else if (/yolo(?:26|11|v?8)|coco|vehic/i.test(file.name)) {
+          setModelState("loading", "Cargando vehículos…");
+          if (state.vehicleModel.worker) state.vehicleModel.worker.terminate();
+          state.vehicleModel = { ready: false, worker: null, session: null, busy: false, ep: null };
+          await modelStore.set("vehicle", buf);
+          await startYoloSlot(state.vehicleModel, buf.slice(0), "Modelo 1 · Vehículos (yolo26n)");
+          notify(`Modelo 1 (Vehículos: ${file.name}) cargado y guardado.`, "info", 3500);
         } else {
-          setModelState("loading", "Cargando modelo…");
+          setModelState("loading", "Cargando placas…");
           if (state.model.worker) state.model.worker.terminate();
-          state.model = { ready: false, worker: null, session: null, busy: false, pending: new Map(), seq: 0 };
+          state.model = { ready: false, worker: null, session: null, busy: false, pending: new Map(), seq: 0, ep: null };
           await modelStore.set("yolo", buf);
-          await startDetector(buf.slice(0));
+          await startYoloSlot(state.model, buf.slice(0), "Modelo 2 · Placas (best.onnx)");
+          notify(`Modelo 2 (Placas: ${file.name}) cargado y guardado.`, "info", 3500);
         }
       }
+      updateModelPill();
     }
 
-    function runModel(data) {
+    function runYoloSlot(slot, data) {
       const size = CONFIG.inputSize;
-      if (state.model.worker) {
-        const ws = state.model.worker;
+      if (slot.worker) {
+        const ws = slot.worker;
         return ws.run({ [ws.inputNames[0]]: new ort.Tensor("float32", data, [1, 3, size, size]) })
           .then((out) => out[ws.outputNames[0]]);
       }
       const tensor = new ort.Tensor("float32", data, [1, 3, size, size]);
-      const s = state.model.session;
+      const s = slot.session;
       return s.run({ [s.inputNames[0]]: tensor }).then((out) => {
         const o = out[s.outputNames[0]];
         return { data: o.data, dims: o.dims };
       });
     }
 
+    const runVehicleModel = (data) => runYoloSlot(state.vehicleModel, data);
+    const runModel = (data) => runYoloSlot(state.model, data);
+
     /* =========================================================
        Preprocesado letterbox + captura exacta del fotograma
        ========================================================= */
     const inferFrameCanvas = document.createElement("canvas");
     const inferFrameCtx = inferFrameCanvas.getContext("2d", { willReadFrequently: true });
+
+    // Fotograma congelado exclusivo para el Modelo 2 (best.onnx): evita que el siguiente frame
+    // de yolo26n sobrescriba la imagen mientras best.onnx está buscando la placa en el recorte.
+    const plateFrameCanvas = document.createElement("canvas");
+    const plateFrameCtx = plateFrameCanvas.getContext("2d", { willReadFrequently: true });
 
     const verifyCanvas = document.createElement("canvas");
     verifyCanvas.width = 36;
@@ -1629,7 +1723,7 @@
       return { sx: vw * 0.10, sy: vh * 0.28, sw: vw * 0.68, sh: vh * 0.66 };
     }
 
-    function letterbox(crop) {
+    function captureCurrentFrame() {
       const vw = video.videoWidth, vh = video.videoHeight;
       if (inferFrameCanvas.width !== vw || inferFrameCanvas.height !== vh) {
         inferFrameCanvas.width = vw;
@@ -1637,7 +1731,9 @@
       }
       // Congelamos el fotograma exacto que analiza YOLO para que el recorte nunca salga corrido ni desfasado
       inferFrameCtx.drawImage(video, 0, 0, vw, vh);
+    }
 
+    function letterboxCanvas(crop, targetCtx = prepCtx, srcCanvas = inferFrameCanvas) {
       const S = CONFIG.inputSize;
       const scale = Math.min(S / crop.sw, S / crop.sh);
       const nw = Math.round(crop.sw * scale);
@@ -1645,10 +1741,10 @@
       const px = Math.floor((S - nw) / 2);
       const py = Math.floor((S - nh) / 2);
 
-      prepCtx.fillStyle = "rgb(114,114,114)";
-      prepCtx.fillRect(0, 0, S, S);
-      prepCtx.drawImage(inferFrameCanvas, crop.sx, crop.sy, crop.sw, crop.sh, px, py, nw, nh);
-      const d = prepCtx.getImageData(0, 0, S, S).data; // lanza SecurityError si el video está "contaminado" (file://)
+      targetCtx.fillStyle = "rgb(114,114,114)";
+      targetCtx.fillRect(0, 0, S, S);
+      targetCtx.drawImage(srcCanvas, crop.sx, crop.sy, crop.sw, crop.sh, px, py, nw, nh);
+      const d = targetCtx.getImageData(0, 0, S, S).data; // lanza SecurityError si el video está "contaminado" (file://)
 
       const n = S * S;
       const f = new Float32Array(3 * n);
@@ -1660,12 +1756,17 @@
       return { data: f, meta: { ...crop, scale, px, py } };
     }
 
+    function letterbox(crop) {
+      captureCurrentFrame();
+      return letterboxCanvas(crop, prepCtx, inferFrameCanvas);
+    }
+
     // Descarta defensas oscuras, llantas o sombras que no tienen el fondo claro/contraste de una placa
-    function hasPlateContrast(x1, y1, x2, y2) {
+    function hasPlateContrast(x1, y1, x2, y2, srcCanvas = inferFrameCanvas) {
       const w = x2 - x1, h = y2 - y1;
       if (w < 14 || h < 6) return false;
       try {
-        verifyCtx.drawImage(inferFrameCanvas, x1 + w * 0.08, y1 + h * 0.18, w * 0.84, h * 0.64, 0, 0, 36, 16);
+        verifyCtx.drawImage(srcCanvas, x1 + w * 0.08, y1 + h * 0.18, w * 0.84, h * 0.64, 0, 0, 36, 16);
         const d = verifyCtx.getImageData(0, 0, 36, 16).data;
         const lum = [];
         for (let j = 0; j < d.length; j += 4) {
@@ -1698,11 +1799,74 @@
       return keep;
     }
 
-    // Soporta YOLO26 end2end [1,300,6] y salidas clásicas [1,C,N] / [1,N,C]
-    function decode(data, dims, meta) {
+    // Modelo 1 (yolo26n.onnx COCO): decodifica únicamente vehículos (car=2, motorcycle=3, bus=5, truck=7)
+    function decodeVehicles(data, dims, meta) {
       const S = CONFIG.inputSize;
       const vw = inferFrameCanvas.width || video.videoWidth;
       const vh = inferFrameCanvas.height || video.videoHeight;
+      const out = [];
+      const thr = CONFIG.vehicleConfThreshold;
+
+      const push = (x1, y1, x2, y2, conf, cls) => {
+        if (!CONFIG.vehicleClasses[cls]) return;
+        if (x2 <= 1.5 && y2 <= 1.5) { x1 *= S; y1 *= S; x2 *= S; y2 *= S; }
+        const bx1 = Math.max(0, (x1 - meta.px) / meta.scale + meta.sx);
+        const by1 = Math.max(0, (y1 - meta.py) / meta.scale + meta.sy);
+        const bx2 = Math.min(vw, (x2 - meta.px) / meta.scale + meta.sx);
+        const by2 = Math.min(vh, (y2 - meta.py) / meta.scale + meta.sy);
+        const w = bx2 - bx1, h = by2 - by1;
+        if (w < vw * 0.025 || h < vh * 0.025) return;
+        out.push({ x1: bx1, y1: by1, x2: bx2, y2: by2, conf, cls, isVehicle: true });
+      };
+
+      if (dims.length === 3 && dims[2] === 6 && dims[1] <= 1000) {
+        // YOLO26 end2end [1, 300, 6]: x1, y1, x2, y2, conf, cls
+        for (let i = 0; i < dims[1]; i++) {
+          const o = i * 6;
+          if (data[o + 4] >= thr) {
+            push(data[o], data[o + 1], data[o + 2], data[o + 3], data[o + 4], Math.round(data[o + 5]));
+          }
+        }
+      } else if (dims.length === 3 && dims[1] < dims[2]) {
+        // Salida clásica [1, 84, N]
+        const C = dims[1], N = dims[2];
+        const vehIds = Object.keys(CONFIG.vehicleClasses).map(Number);
+        for (let i = 0; i < N; i++) {
+          let best = 0, bestCls = -1;
+          for (const c of vehIds) {
+            if (4 + c >= C) continue;
+            const v = data[(4 + c) * N + i];
+            if (v > best) { best = v; bestCls = c; }
+          }
+          if (best < thr) continue;
+          const cx = data[i], cy = data[N + i], w = data[2 * N + i], h = data[3 * N + i];
+          push(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, best, bestCls);
+        }
+      } else if (dims.length === 3) {
+        // Salida transpuesta [1, N, 84]
+        const N = dims[1], C = dims[2];
+        const vehIds = Object.keys(CONFIG.vehicleClasses).map(Number);
+        for (let i = 0; i < N; i++) {
+          const o = i * C;
+          let best = 0, bestCls = -1;
+          for (const c of vehIds) {
+            if (4 + c >= C) continue;
+            const v = data[o + 4 + c];
+            if (v > best) { best = v; bestCls = c; }
+          }
+          if (best < thr) continue;
+          const cx = data[o], cy = data[o + 1], w = data[o + 2], h = data[o + 3];
+          push(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, best, bestCls);
+        }
+      }
+      return nms(out, CONFIG.vehicleIouThreshold);
+    }
+
+    // Modelo 2 (best.onnx placas): soporta YOLO26 end2end [1,300,6] y salidas clásicas [1,C,N] / [1,N,C]
+    function decode(data, dims, meta, customThr = null, srcCanvas = inferFrameCanvas) {
+      const S = CONFIG.inputSize;
+      const vw = srcCanvas.width || video.videoWidth;
+      const vh = srcCanvas.height || video.videoHeight;
       const out = [];
 
       const push = (x1, y1, x2, y2, conf) => {
@@ -1713,18 +1877,18 @@
         const by2 = Math.min(vh, (y2 - meta.py) / meta.scale + meta.sy);
         const w = bx2 - bx1;
         const h = by2 - by1;
-        if (w < vw * 0.015 || h < 6) return;
-        // Filtros de forma/tamaño/contraste: pensados para descartar defensas o sombras. Con el modelo
-        // entrenado con TENAX-LPR v2 + augmentation (0 falsas en test con conf 0.6) se relajaron para
-        // no tirar placas reales vistas de lado, de cerca o con poco contraste (sol, autos plateados).
+        // En recorte de vehículo, el tamaño mínimo se mide respecto al ancho del auto (no del video 4K completo)
+        const isVehCrop = meta.sw < vw * 0.9;
+        const minW = isVehCrop ? Math.max(14, meta.sw * 0.07) : Math.max(16, vw * 0.010);
+        if (w < minW || h < 6) return;
         const ar = w / h;
         if (ar < 1.0 || ar > 6.5) return;
         if (w > vw * 0.5 || h > vh * 0.3) return;
-        if (conf < 0.8 && !hasPlateContrast(bx1, by1, bx2, by2)) return;
+        if (conf < 0.78 && !hasPlateContrast(bx1, by1, bx2, by2, srcCanvas)) return;
         out.push({ x1: bx1, y1: by1, x2: bx2, y2: by2, conf });
       };
 
-      const thr = CONFIG.confThreshold;
+      const thr = customThr ?? CONFIG.confThreshold;
       if (dims.length === 3 && dims[2] === 6 && dims[1] <= 1000) {
         for (let i = 0; i < dims[1]; i++) {
           const o = i * 6;
@@ -1753,10 +1917,130 @@
       return nms(out, CONFIG.iouThreshold);
     }
 
+    // Verifica que una placa encontrada dentro del recorte de `tr` no pertenezca en realidad a otro auto superpuesto
+    function plateBelongsToVehicle(tr, plate, vehBox) {
+      const pcx = (plate.x1 + plate.x2) / 2;
+      const pcy = (plate.y1 + plate.y2) / 2;
+      const myArea = Math.max(1, (vehBox.x2 - vehBox.x1) * (vehBox.y2 - vehBox.y1));
+      const myDist = Math.hypot(pcx - (vehBox.x1 + vehBox.x2) / 2, pcy - (vehBox.y1 + vehBox.y2) / 2);
+
+      for (const other of state.tracks) {
+        if (other === tr || !other.isVehicle || !other.confirmed) continue;
+        const ob = other.box;
+        if (pcx >= ob.x1 && pcx <= ob.x2 && pcy >= ob.y1 && pcy <= ob.y2) {
+          const oArea = Math.max(1, (ob.x2 - ob.x1) * (ob.y2 - ob.y1));
+          const oDist = Math.hypot(pcx - (ob.x1 + ob.x2) / 2, pcy - (ob.y1 + ob.y2) / 2);
+          // Si la placa cae mucho más centrada dentro de un auto más pequeño/específico, pertenece a ese otro auto
+          if (oArea < myArea * 0.75 && oDist < myDist * 0.85) return false;
+        }
+      }
+      return true;
+    }
+
+    // Ejecuta el Modelo 2 (best.onnx) únicamente sobre el recorte del vehículo elegido
+    async function runPlateOnVehicle(tr) {
+      if (!state.model.ready || state.model.busy || !inferFrameCanvas.width) return;
+      state.model.busy = true;
+      tr.lastPlateScanAt = performance.now();
+      try {
+        const vw = inferFrameCanvas.width, vh = inferFrameCanvas.height;
+        // Congelamos una copia propia del fotograma actual para que el siguiente frame de yolo26n
+        // nunca desfase ni corte la placa mientras best.onnx está procesando.
+        if (plateFrameCanvas.width !== vw || plateFrameCanvas.height !== vh) {
+          plateFrameCanvas.width = vw;
+          plateFrameCanvas.height = vh;
+        }
+        plateFrameCtx.drawImage(inferFrameCanvas, 0, 0, vw, vh);
+
+        const vehBox = { ...tr.box };
+        const bw = vehBox.x2 - vehBox.x1, bh = vehBox.y2 - vehBox.y1;
+        const padX = bw * 0.06, padY = bh * 0.06;
+        const sx = Math.max(0, Math.floor(vehBox.x1 - padX));
+        const sy = Math.max(0, Math.floor(vehBox.y1 - padY));
+        const ex = Math.min(vw, Math.ceil(vehBox.x2 + padX));
+        const ey = Math.min(vh, Math.ceil(vehBox.y2 + padY));
+        const sw = ex - sx, sh = ey - sy;
+        if (sw < 24 || sh < 24) return;
+
+        const prep = letterboxCanvas({ sx, sy, sw, sh }, platePrepCtx, plateFrameCanvas);
+        const out = await runModel(prep.data);
+        if (!state.detecting) return;
+        const plates = decode(out.data, out.dims, prep.meta, CONFIG.plateCropConfThreshold, plateFrameCanvas)
+          .filter((p) => plateBelongsToVehicle(tr, p, vehBox));
+        if (plates.length) {
+          const bestPlate = plates[0];
+          tr.plateBox = { x1: bestPlate.x1, y1: bestPlate.y1, x2: bestPlate.x2, y2: bestPlate.y2, conf: bestPlate.conf };
+          tr.plateLastSeen = performance.now();
+          captureBestSnapshot(tr, bestPlate, plateFrameCanvas);
+        }
+      } catch (err) {
+        console.warn("Detector de placas (recorte):", err);
+      } finally {
+        state.model.busy = false;
+      }
+    }
+
+    // Elige el vehículo prioritario para pasarle su recorte al Modelo 2 (best.onnx)
+    function schedulePlateOnVehicle(now) {
+      if (!isCascadeMode() || !state.model.ready || state.model.busy) return;
+      const vw = inferFrameCanvas.width || video.videoWidth;
+      const vh = inferFrameCanvas.height || video.videoHeight;
+      if (!vw || !vh) return;
+
+      let pick = null, bestPriority = -1;
+      for (const tr of state.tracks) {
+        if (!tr.isVehicle || !tr.confirmed) continue;
+        if (tr.plate && tr.plateScore >= CONFIG.plateDoneScore && (tr.plateConf == null || tr.plateConf >= CONFIG.plateSureConf)) continue;
+        if (now - (tr.lastPlateScanAt || 0) < CONFIG.plateSearchIntervalMs) continue;
+
+        const bw = tr.box.x2 - tr.box.x1;
+        const inNearZone = (bw >= vw * CONFIG.nearZoneMinWidthRatio || bw >= 110) && tr.box.y2 >= vh * CONFIG.nearZoneMinBottomRatio;
+        const violating = tr.speedReady && tr.speed > state.limit + CONFIG.speedToleranceKmh;
+
+        // Si el usuario activó ahorro de recursos, solo busca placas en vehículos que superaron el límite
+        if (state.onlySpeedingPlates && !violating) continue;
+        if (!inNearZone && !violating) continue;
+
+        const priority = (violating ? 1000 : 100) + (bw / vw) * 200 + (!tr.plate ? 80 : 0);
+        if (priority > bestPriority) {
+          bestPriority = priority;
+          pick = tr;
+        }
+      }
+      if (pick) runPlateOnVehicle(pick);
+    }
+
     async function doInference() {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (isCascadeMode()) {
+        // Pipeline 3 modelos: Modelo 1 (yolo26n.onnx) corre en el fotograma completo para vehículos + velocidad
+        state.vehicleModel.busy = true;
+        state.lastInferAt = performance.now();
+        let prep;
+        try {
+          prep = letterbox({ sx: 0, sy: 0, sw: vw, sh: vh });
+        } catch (err) {
+          state.vehicleModel.busy = false;
+          handleTainted();
+          return;
+        }
+        const videoTime = video.currentTime;
+        try {
+          const out = await runVehicleModel(prep.data);
+          if (!state.detecting) return;
+          updateTracks(decodeVehicles(out.data, out.dims, prep.meta), videoTime, true);
+          schedulePlateOnVehicle(performance.now());
+        } catch (err) {
+          console.warn("Inferencia vehículos:", err);
+        } finally {
+          state.vehicleModel.busy = false;
+        }
+        return;
+      }
+
+      // Modo respaldo (sin yolo26n.onnx): Modelo 2 (best.onnx) directo sobre el video
       state.model.busy = true;
       state.lastInferAt = performance.now();
-      const vw = video.videoWidth, vh = video.videoHeight;
       let prep;
       try {
         prep = letterbox(nextCrop(vw, vh));
@@ -1769,7 +2053,7 @@
       try {
         const out = await runModel(prep.data);
         if (!state.detecting) return;
-        updateTracks(decode(out.data, out.dims, prep.meta), videoTime);
+        updateTracks(decode(out.data, out.dims, prep.meta), videoTime, false);
       } catch (err) {
         console.warn("Inferencia:", err);
       } finally {
@@ -1778,14 +2062,14 @@
     }
 
     /* =========================================================
-       Seguimiento de placas + estimación de velocidad
+       Seguimiento de vehículos/placas + estimación de velocidad
        ========================================================= */
     function resetTracks() {
       state.tracks = [];
       state.ocrQueue = [];
     }
 
-    function updateTracks(dets, t) {
+    function updateTracks(dets, t, isVehicle = false) {
       const now = performance.now();
       if (t < state.lastVideoTime - 0.5) resetTracks(); // el video volvió a empezar
       state.lastVideoTime = t;
@@ -1797,19 +2081,19 @@
         let best = null, bestScore = 0;
 
         for (const tr of state.tracks) {
-          if (matched.has(tr)) continue;
+          if (matched.has(tr) || Boolean(tr.isVehicle) !== Boolean(isVehicle)) continue;
           const dt = Math.max(0, t - tr.lastT);
           const pcx = tr.cx + tr.vx * dt, pcy = tr.cy + tr.vy * dt;
           const tw = tr.box.x2 - tr.box.x1, th = tr.box.y2 - tr.box.y1;
           const pred = { x1: pcx - tw / 2, y1: pcy - th / 2, x2: pcx + tw / 2, y2: pcy + th / 2 };
           let score = iou(pred, d);
           const dist = Math.hypot(dcx - pcx, dcy - pcy);
-          const gate = Math.max(tw, dw) * 2.4 + 50;
-          if (dist < gate) score = Math.max(score, 0.35 * (1 - dist / gate));
+          const gate = Math.max(tw, dw) * (isVehicle ? 0.85 : 2.4) + (isVehicle ? 25 : 50);
+          if (dist < gate) score = Math.max(score, (isVehicle ? 0.25 : 0.35) * (1 - dist / gate));
           if (score > bestScore) { bestScore = score; best = tr; }
         }
 
-        if (best && bestScore > 0.05) {
+        if (best && bestScore > (isVehicle ? 0.22 : 0.05)) {
           matched.add(best);
           const dt = t - best.lastT;
           if (dt > 0.01) {
@@ -1822,23 +2106,30 @@
           best.lastSeen = now;
           best.hits++;
           best.conf = d.conf;
-          captureBestSnapshot(best, d);
+          if (isVehicle && d.cls != null) best.cls = d.cls;
+          if (!isVehicle) captureBestSnapshot(best, d);
           addSpeedSample(best, d, t);
           if (!best.confirmed && best.hits >= CONFIG.minHitsShow) confirmTrack(best);
         } else {
           const tr = {
             id: state.nextTrackId++,
+            isVehicle: Boolean(isVehicle),
+            cls: d.cls ?? 2,
             box: { x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2 },
+            plateBox: null,
+            plateLastSeen: 0,
+            lastPlateScanAt: 0,
             disp: null,
             cx: dcx, cy: dcy, vx: 0, vy: 0,
             lastT: t, lastSeen: now, hits: 1, conf: d.conf,
             confirmed: false, confirmedAt: 0, finished: false,
-            samples: [], speed: null, speedReady: false, maxSpeed: 0,
+            samples: [], speed: null, radarSpeed: null, speedReady: false, maxSpeed: 0,
+            prevBottomY: d.y2, prevSampleT: t, tLine1: null, tLine2: null,
             reads: {}, plate: null, plateScore: 0, ocrTries: 0, inOcr: false,
             lastOcrAt: 0, lastCrop: null, bestCrop: null, bestSnapCanvas: null, bestSnapScore: 0, snaps: [], votes: {}, probSum: null, probW: 0, plateConf: null,
             pendingTicket: false, ticketed: false, evidence: null, violationSpeed: 0
           };
-          captureBestSnapshot(tr, d);
+          if (!isVehicle) captureBestSnapshot(tr, d);
           addSpeedSample(tr, d, t);
           state.tracks.push(tr);
           matched.add(tr);
@@ -1857,15 +2148,53 @@
       return den > 0 ? num / den : 0;
     }
 
+    // Estimación de velocidad estilo Ultralytics SpeedEstimator:
+    // 1) Cruce de dos líneas de control con distancia real en metros (tr.radarSpeed)
+    // 2) Velocidad continua por desplazamiento de punto de contacto (cx, y2) y escala real del vehículo (meters_per_pixel)
     function addSpeedSample(tr, d, t) {
       const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return;
       const f = vw / (2 * Math.tan((CONFIG.hfovDeg * Math.PI) / 360));
       const wpx = Math.max(8, d.x2 - d.x1);
       const cx = (d.x1 + d.x2) / 2;
-      const cy = (d.y1 + d.y2) / 2;
-      const Z = (f * CONFIG.plateWidthM) / wpx;
+      const anchorY = tr.isVehicle ? d.y2 : (d.y1 + d.y2) / 2;
+      const realWidthM = tr.isVehicle
+        ? ((CONFIG.vehicleClasses[tr.cls] && CONFIG.vehicleClasses[tr.cls].widthM) || 1.80)
+        : CONFIG.plateWidthM;
+
+      // 1. Cruce de líneas de radar (en modo vehículo)
+      if (tr.isVehicle && tr.prevSampleT != null && t > tr.prevSampleT) {
+        const yL1 = vh * CONFIG.radarLine1Ratio;
+        const yL2 = vh * CONFIG.radarLine2Ratio;
+        const yPrev = tr.prevBottomY;
+        const dtSeg = t - tr.prevSampleT;
+
+        if (tr.tLine1 == null && ((yPrev < yL1 && anchorY >= yL1) || (yPrev > yL1 && anchorY <= yL1))) {
+          const frac = Math.abs(anchorY - yPrev) > 1e-3 ? Math.abs(yL1 - yPrev) / Math.abs(anchorY - yPrev) : 0.5;
+          tr.tLine1 = tr.prevSampleT + dtSeg * frac;
+        }
+        if (tr.tLine2 == null && ((yPrev < yL2 && anchorY >= yL2) || (yPrev > yL2 && anchorY <= yL2))) {
+          const frac = Math.abs(anchorY - yPrev) > 1e-3 ? Math.abs(yL2 - yPrev) / Math.abs(anchorY - yPrev) : 0.5;
+          tr.tLine2 = tr.prevSampleT + dtSeg * frac;
+        }
+        if (tr.tLine1 != null && tr.tLine2 != null && tr.radarSpeed == null) {
+          const dtZone = Math.abs(tr.tLine2 - tr.tLine1);
+          if (dtZone >= 0.08 && dtZone <= 15) {
+            tr.radarSpeed = Math.min(CONFIG.maxSpeedKmh, (state.zoneMeters / dtZone) * 3.6 * state.calib);
+            tr.speed = tr.radarSpeed;
+            tr.speedReady = true;
+            tr.maxSpeed = Math.max(tr.maxSpeed, tr.speed);
+          }
+        }
+      }
+      tr.prevBottomY = anchorY;
+      tr.prevSampleT = t;
+
+      // 2. Velocidad continua (perspectiva + meter_per_pixel)
+      const Z = (f * realWidthM) / wpx;
       const X = (cx - vw / 2) * Z / f;
-      tr.samples.push({ t, Z, X, cx, cy, wpx });
+      tr.samples.push({ t, Z, X, cx, cy: anchorY, wpx });
       tr.samples = tr.samples.filter((s) => s.t >= t - CONFIG.speedWindowS);
 
       const span = tr.samples[tr.samples.length - 1].t - tr.samples[0].t;
@@ -1875,13 +2204,36 @@
         const vx = slope(ts, tr.samples.map((s) => s.X));
         const vcx = slope(ts, tr.samples.map((s) => s.cx));
         const vcy = slope(ts, tr.samples.map((s) => s.cy));
-        const metersPerPx = 0.30 / wpx;
-        // Combina velocidad 3D por escala con desplazamiento sobre el plano vial (para tomas con telefoto)
-        const vScale = Math.hypot(vz, vx);
-        const vGround = Math.hypot(vcx * metersPerPx * 1.6, vcy * metersPerPx * 4.4);
-        const mps = Math.max(vScale, vGround);
-        const kmh = Math.min(220, mps * 3.6 * state.calib);
-        tr.speed = tr.speed == null ? kmh : tr.speed * 0.6 + kmh * 0.4;
+
+        let mps;
+        if (tr.isVehicle) {
+          // Escala real en metros/píxel derivada del ancho conocido del vehículo + relación de la zona radar
+          const zoneMpp = state.zoneMeters / Math.max(20, vh * (CONFIG.radarLine2Ratio - CONFIG.radarLine1Ratio));
+          const widthMpp = realWidthM / Math.max(24, wpx);
+          const vGround = Math.hypot(vcx * widthMpp, vcy * zoneMpp);
+          // Si el vehículo toca el borde de la pantalla (entrando/saliendo), el cambio de ancho es recorte, no velocidad real
+          const onEdge = d.x1 <= 12 || d.x2 >= vw - 12 || d.y2 >= vh - 12;
+          if (onEdge) {
+            mps = vGround;
+          } else {
+            // Limita la influencia de vz (cambio de ancho) para evitar picos falsos por oclusión entre autos
+            const vScale = Math.hypot(vz, vx);
+            mps = vGround < 1.2 ? vGround : Math.min(vGround * 1.45, Math.max(vGround, vScale * 0.65));
+          }
+        } else {
+          const metersPerPx = 0.30 / wpx;
+          const vScale = Math.hypot(vz, vx);
+          const vGround = Math.hypot(vcx * metersPerPx * 1.6, vcy * metersPerPx * 4.4);
+          mps = Math.max(vScale, vGround);
+        }
+
+        const kmh = Math.min(CONFIG.maxSpeedKmh, mps * 3.6 * state.calib);
+        if (tr.radarSpeed != null) {
+          // Si ya cruzó ambas líneas de radar, la medición de zona prevalece con leve suavizado
+          tr.speed = tr.radarSpeed * 0.8 + kmh * 0.2;
+        } else {
+          tr.speed = tr.speed == null ? kmh : tr.speed * 0.6 + kmh * 0.4;
+        }
         tr.speedReady = true;
         tr.maxSpeed = Math.max(tr.maxSpeed, tr.speed);
       }
@@ -1918,7 +2270,11 @@
         if (!state.ocrQueue.includes(tr)) state.ocrQueue.push(tr);
         return;
       }
-      if (tr.pendingTicket && !tr.ticketed) issueTicket(tr);
+      if (tr.pendingTicket && !tr.ticketed && tr.plate) {
+        issueTicket(tr);
+      } else if (!tr.plate) {
+        tr.pendingTicket = false;
+      }
       updateFeedItem(tr, true);
     }
 
@@ -1940,9 +2296,9 @@
     }
 
     /* =========================================================
-       OCR de placas (Tesseract en worker + recorte de franja central)
+       Modelo 3: OCR de placas ONNX (cct_s_v2_global.onnx)
        ========================================================= */
-    const ocrPool = { workers: [], busy: [false], initPromise: null, engine: null, fast: null, tess: null, fastFails: 0, fastFmt: null };
+    const ocrPool = { workers: [], busy: [false], initPromise: null, engine: null, fast: null, fastFails: 0, fastFmt: null };
     const PLATE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_";
 
     async function loadFastPlateModel() {
@@ -1977,19 +2333,6 @@
       return null;
     }
 
-    async function useTesseract() {
-      if (!ocrPool.tess) {
-        const w = await Tesseract.createWorker("eng");
-        await w.setParameters({
-          tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-          tessedit_pageseg_mode: "7"
-        });
-        ocrPool.tess = w;
-      }
-      ocrPool.engine = "tesseract";
-      ocrPool.workers = [ocrPool.tess];
-    }
-
     function getOcrWorkerSlot() {
       if (!ocrPool.initPromise) {
         ocrPool.initPromise = (async () => {
@@ -1999,9 +2342,11 @@
             ocrPool.engine = "fast";
             ocrPool.workers = [fast];
             console.info("OCR de placas: modelo ONNX cargado", fast.inputNames, fast.outputNames);
+            updateModelPill();
           } else {
-            notify("No encontré cct_s_v1_global.onnx; uso Tesseract (menos preciso). Elígelo una vez con el botón de modelos y quedará guardado.", "error", 7000);
-            await useTesseract();
+            ocrPool.engine = null;
+            ocrPool.workers = [];
+            notify("No encontré cct_s_v2_global.onnx. Cárgalo con el botón de modelos .onnx para leer placas.", "error", 7000);
           }
         })();
       }
@@ -2075,12 +2420,24 @@
         if (!out) throw lastErr;
       }
 
-      // Toma la salida de caracteres (los modelos v2 traen además una salida de región)
+      // Toma la salida de caracteres (cct_s_v2_global.onnx tiene doble cabeza: caracteres + región)
       const A = PLATE_ALPHABET.length;
       let probs = null;
       for (const n of s.outputNames) {
-        const d = out[n].data;
-        if (d.length % A === 0 && d.length >= 5 * A) { probs = d; break; }
+        const o = out[n];
+        if (!o || !o.data) continue;
+        const d = o.data;
+        const dims = o.dims || [];
+        if (d.length % A === 0 && d.length >= 5 * A && (/plate|char|text|ocr/i.test(n) || dims[dims.length - 1] === A)) {
+          probs = d;
+          break;
+        }
+      }
+      if (!probs) {
+        for (const n of s.outputNames) {
+          const d = out[n].data;
+          if (d.length % A === 0 && d.length >= 5 * A) { probs = d; break; }
+        }
       }
       if (!probs) throw new Error("Salida inesperada del modelo OCR");
       const slots = probs.length / A;
@@ -2160,9 +2517,9 @@
       return s2 / n - m * m;
     }
 
-    // Guarda los N recortes más nítidos de cada placa tomados del FOTOGRAMA CONGELADO (inferFrameCanvas)
-    function captureBestSnapshot(tr, box) {
-      const src = inferFrameCanvas.width ? inferFrameCanvas : video;
+    // Guarda los N recortes más nítidos de cada placa tomados del FOTOGRAMA CONGELADO (srcCanvas)
+    function captureBestSnapshot(tr, box, srcCanvas = inferFrameCanvas) {
+      const src = srcCanvas && srcCanvas.width ? srcCanvas : video;
       const vw = src.width || video.videoWidth;
       const vh = src.height || video.videoHeight;
       if (!vw || !vh) return;
@@ -2170,8 +2527,8 @@
       if (w < 8 || h < 4) return;
       const area = w * h * (box.conf || 0.5);
 
-      // Recorte con un pequeño margen para no cortar letras en los bordes
-      const mx = w * 0.03, my = h * 0.04;
+      // Recorte con margen suficiente para no cortar letras en los bordes
+      const mx = w * 0.06, my = h * 0.06;
       const cx1 = Math.max(0, box.x1 - mx), cy1 = Math.max(0, box.y1 - my);
       const cx2 = Math.min(vw, box.x2 + mx), cy2 = Math.min(vh, box.y2 + my);
       const cw = cx2 - cx1, chh = cy2 - cy1;
@@ -2205,12 +2562,12 @@
       tr.bestSnapCanvas = snaps[0].canvas;
       tr.bestSnapScore = Math.max(tr.bestSnapScore, area);
 
-      // Miniatura para la lista: sólo cuando este recorte es el mejor
+      // Miniatura para la lista y el aviso: sólo cuando este recorte es el mejor
       if (snaps[0] === snap) {
-        const sx = Math.max(0, box.x1 - w * 0.04);
-        const sy = Math.max(0, box.y1 - h * 0.06);
-        const sw = Math.min(vw - sx, w * 1.08);
-        const sh = Math.min(vh - sy, h * 1.12);
+        const sx = Math.max(0, box.x1 - w * 0.08);
+        const sy = Math.max(0, box.y1 - h * 0.08);
+        const sw = Math.min(vw - sx, w * 1.16);
+        const sh = Math.min(vh - sy, h * 1.16);
         const thumbC = document.createElement("canvas");
         const thumbH = 76;
         thumbC.width = Math.max(1, Math.round((sw * thumbH) / sh));
@@ -2223,144 +2580,7 @@
       }
     }
 
-    // Detecta automáticamente dónde empieza y termina el fondo claro de la placa
-    // (quita el porta-placas negro "Chevrolet / Satélite" en NFE-31-08 sin cortar las letras en T65-AGD o 782-YJJ)
-    function findPlateWindow(rawCanvas) {
-      const rw = rawCanvas.width, rh = rawCanvas.height;
-      const rctx = rawCanvas.getContext("2d", { willReadFrequently: true });
-      const data = rctx.getImageData(0, 0, rw, rh).data;
-
-      const rowP78 = new Float32Array(rh);
-      for (let y = 0; y < rh; y++) {
-        const vals = [];
-        for (let x = Math.floor(rw * 0.10); x < Math.ceil(rw * 0.90); x += 2) {
-          const j = (y * rw + x) * 4;
-          vals.push(data[j] * 0.299 + data[j + 1] * 0.587 + data[j + 2] * 0.114);
-        }
-        vals.sort((a, b) => a - b);
-        rowP78[y] = vals[Math.floor(vals.length * 0.78)] || 128;
-      }
-
-      let centerBg = 0;
-      for (let y = Math.floor(rh * 0.30); y < Math.ceil(rh * 0.70); y++) {
-        if (rowP78[y] > centerBg) centerBg = rowP78[y];
-      }
-      const thrY = Math.max(95, centerBg * 0.72);
-
-      // Sólo recorta filas oscuras del porta-placas arriba y abajo
-      let y0 = Math.floor(rh * 0.05);
-      while (y0 < Math.floor(rh * 0.30) && rowP78[y0] < thrY) y0++;
-      let y1 = Math.ceil(rh * 0.95);
-      while (y1 > Math.ceil(rh * 0.70) && rowP78[y1 - 1] < thrY) y1--;
-
-      // Recorta ligeramente el encabezado estatal si la placa aún es muy alta
-      const hSpan = y1 - y0;
-      if (hSpan > rh * 0.78) {
-        y0 += Math.round(hSpan * 0.12);
-        y1 -= Math.round(hSpan * 0.08);
-      }
-
-      // Columnas laterales oscuras (marco izquierdo y derecho)
-      const colP78 = (x) => {
-        const vals = [];
-        for (let y = y0; y < y1; y += 2) {
-          const j = (y * rw + x) * 4;
-          vals.push(data[j] * 0.299 + data[j + 1] * 0.587 + data[j + 2] * 0.114);
-        }
-        vals.sort((a, b) => a - b);
-        return vals[Math.floor(vals.length * 0.78)] || 128;
-      };
-      let x0 = Math.floor(rw * 0.02);
-      while (x0 < Math.floor(rw * 0.12) && colP78(x0) < thrY * 0.9) x0++;
-      let x1 = Math.ceil(rw * 0.98);
-      while (x1 > Math.ceil(rw * 0.88) && colP78(x1 - 1) < thrY * 0.9) x1--;
-
-      return {
-        sx: x0,
-        sy: y0,
-        sw: Math.max(28, x1 - x0),
-        sh: Math.max(16, y1 - y0)
-      };
-    }
-
-    function renderOcrBand(rawCanvas, win, sharpenGain = 0.55) {
-      const H = 84;
-      const W = Math.max(96, Math.round((win.sw * H) / win.sh));
-      const pad = 22;
-
-      const work = document.createElement("canvas");
-      work.width = W;
-      work.height = H;
-      const wctx = work.getContext("2d", { willReadFrequently: true });
-      wctx.imageSmoothingQuality = "high";
-      wctx.drawImage(rawCanvas, win.sx, win.sy, win.sw, win.sh, 0, 0, W, H);
-      const img = wctx.getImageData(0, 0, W, H);
-      const d = img.data;
-      const n = W * H;
-      const gray = new Float32Array(n);
-      const hist = new Array(256).fill(0);
-      for (let i = 0, j = 0; i < n; i++, j += 4) {
-        const g = (d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114) | 0;
-        gray[i] = g;
-        hist[g]++;
-      }
-
-      // Contraste suave (percentil 3 -> 0, percentil 88 -> 255) para no engrosar ni pegar letras como F y E
-      let acc = 0, lo = 0, hi = 255;
-      for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= n * 0.03) { lo = i; break; } }
-      acc = 0;
-      for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= n * 0.12) { hi = i; break; } }
-      const span = Math.max(25, hi - lo);
-      const norm = new Float32Array(n);
-      for (let i = 0; i < n; i++) norm[i] = Math.max(0, Math.min(255, ((gray[i] - lo) * 255) / span));
-
-      const out = document.createElement("canvas");
-      out.width = W + pad * 2;
-      out.height = H + pad * 2;
-      const octx2 = out.getContext("2d");
-      octx2.fillStyle = "#fff";
-      octx2.fillRect(0, 0, out.width, out.height);
-      const oImg = octx2.createImageData(W, H);
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          const idx = y * W + x;
-          let v = norm[idx];
-          if (x === 0 || x === W - 1 || y === 0 || y === H - 1) {
-            v = 255;
-          } else if (sharpenGain > 0) {
-            const blur = (norm[idx - 1] + norm[idx + 1] + norm[idx - W] + norm[idx + W]) * 0.25;
-            v = Math.max(0, Math.min(255, v + (v - blur) * sharpenGain));
-          }
-          const j = idx * 4;
-          oImg.data[j] = oImg.data[j + 1] = oImg.data[j + 2] = v;
-          oImg.data[j + 3] = 255;
-        }
-      }
-      octx2.putImageData(oImg, pad, pad);
-      return out;
-    }
-
-    function buildOcrVariants(rawCanvas) {
-      const rw = rawCanvas.width, rh = rawCanvas.height;
-      const autoWin = findPlateWindow(rawCanvas);
-      const innerWin = {
-        sx: Math.floor(rw * 0.03),
-        sy: Math.floor(rh * 0.18),
-        sw: Math.max(28, Math.ceil(rw * 0.94)),
-        sh: Math.max(16, Math.ceil(rh * 0.64))
-      };
-      return [
-        renderOcrBand(rawCanvas, autoWin, 0.55),
-        renderOcrBand(rawCanvas, innerWin, 0.75),
-        renderOcrBand(rawCanvas, { sx: 0, sy: 0, sw: rw, sh: rh }, 0.4) // placa completa, sin recortar marcos
-      ];
-    }
-
-    // Conversiones estrictas (sin 3->J ni 7->T que deformaban NFE-31-08 en NTJ-108)
-    const DICT_CHAR_TO_INT = { O: "0", Q: "0", D: "0", I: "1", L: "1", Z: "2", S: "5", G: "6", B: "8" };
-    const DICT_INT_TO_CHAR = { "0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B" };
-    const BLACKLIST_WORDS = new Set(["SONORA", "MEXICO", "EDOMEX", "CDMX", "TRANSPORTE", "PRIVADO", "GOBIERNO", "ESTADO", "FRONTERA", "AUTOMOVIL", "CHEVROLET", "SATELITE"]);
-
+    // Formatos de placas mexicanas usados para decodificar probabilidades de cct_s_v2_global.onnx
     const SUPPORTED_MASKS = [
       { mask: "LLLDDDD", fmt: (s) => `${s.slice(0, 3)}-${s.slice(3, 5)}-${s.slice(5, 7)}` }, // Edomex / Nacional 7 (NFE-31-08, NFG-64-81)
       { mask: "LDDLLL",  fmt: (s) => `${s.slice(0, 3)}-${s.slice(3, 6)}` },                  // CDMX (T65-AGD, T65-AZZ)
@@ -2370,91 +2590,6 @@
       { mask: "LLLDDDL", fmt: (s) => `${s.slice(0, 3)}-${s.slice(3, 6)}-${s.slice(6, 7)}` }, // Estatal nuevo (WYZ-123-A)
       { mask: "LLDDDDD", fmt: (s) => `${s.slice(0, 2)}-${s.slice(2, 4)}-${s.slice(4, 7)}` }, // Carga (AB-12-345)
     ];
-
-    function checkAndFormatMask(sub, mask) {
-      let conversions = 0, out = "";
-      for (let i = 0; i < mask.length; i++) {
-        const ch = sub[i], req = mask[i];
-        if (req === "L") {
-          if (/[A-Z]/.test(ch)) out += ch;
-          else if (DICT_INT_TO_CHAR[ch]) { out += DICT_INT_TO_CHAR[ch]; conversions++; }
-          else return null;
-        } else {
-          if (/[0-9]/.test(ch)) out += ch;
-          else if (DICT_CHAR_TO_INT[ch]) { out += DICT_CHAR_TO_INT[ch]; conversions++; }
-          else return null;
-        }
-      }
-      return conversions <= 1 ? { text: out, conversions } : null;
-    }
-
-    function cleanPlateText(raw) {
-      const lines = (raw || "").toUpperCase().split(/[\r\n]+/);
-      for (const line of lines) {
-        const clean = line.replace(/[^A-Z0-9]/g, "");
-        if (clean.length < 5 || BLACKLIST_WORDS.has(clean)) continue;
-
-        // Si los guiones se leyeron como '1' o 'I' (ej. NFE131108 -> NFE3108, T651AGD -> T65AGD, A1341991 -> A34991)
-        const candidates = [clean];
-        if (clean.length === 9) candidates.push(clean.slice(0, 3) + clean.slice(4, 6) + clean.slice(7, 9));
-        if (clean.length === 8) {
-          candidates.push(clean.slice(0, 3) + clean.slice(4, 8));
-          candidates.push(clean.slice(0, 5) + clean.slice(6, 8));
-          candidates.push(clean.slice(0, 1) + clean.slice(2, 4) + clean.slice(5, 8));
-        }
-        if (clean.length === 7) {
-          candidates.push(clean.slice(0, 3) + clean.slice(4, 7));
-          candidates.push(clean.slice(0, 1) + clean.slice(2, 7));
-        }
-
-        let bestFormatted = null, minScore = 999;
-        for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
-          const cand = candidates[cIdx];
-          for (const tpl of SUPPORTED_MASKS) {
-            const len = tpl.mask.length;
-            if (cand.length < len || cand.length > len + 1) continue;
-            for (let start = 0; start <= cand.length - len; start++) {
-              const sub = cand.slice(start, start + len);
-              if (BLACKLIST_WORDS.has(sub)) continue;
-              const res = checkAndFormatMask(sub, tpl.mask);
-              if (res) {
-                const penalty = res.conversions + (cand.length - len) * 0.6 + (cIdx > 0 ? 0.3 : 0);
-                if (penalty < minScore) {
-                  minScore = penalty;
-                  bestFormatted = tpl.fmt(res.text);
-                }
-              }
-            }
-          }
-        }
-        if (bestFormatted) return bestFormatted;
-      }
-
-      return null;
-    }
-
-    // Da formato con guiones según la máscara mexicana que mejor encaje; si ninguna encaja, devuelve el texto tal cual
-    function formatPlate(raw) {
-      let best = null, bestConv = 99;
-      for (const tpl of SUPPORTED_MASKS) {
-        if (tpl.mask.length !== raw.length) continue;
-        const res = checkAndFormatMask(raw, tpl.mask);
-        if (res && res.conversions === 0 && res.conversions < bestConv) { bestConv = res.conversions; best = tpl.fmt(res.text); }
-      }
-      return best || raw;
-    }
-
-    // Votación carácter por carácter entre todas las lecturas de la misma placa (se vota por la longitud más respaldada)
-    function addPlateVote(tr, alnum, weight) {
-      const L = alnum.length;
-      const v = tr.votes[L] || (tr.votes[L] = { total: 0, pos: Array.from({ length: L }, () => ({})) });
-      v.total += weight;
-      for (let i = 0; i < L; i++) v.pos[i][alnum[i]] = (v.pos[i][alnum[i]] || 0) + weight;
-      let win = null;
-      for (const val of Object.values(tr.votes)) if (!win || val.total > win.total) win = val;
-      const raw = win.pos.map((p) => Object.entries(p).sort((a, b) => b[1] - a[1])[0][0]).join("");
-      return { text: formatPlate(raw), score: win.total };
-    }
 
     function scheduleOcr(now) {
       getOcrWorkerSlot();
@@ -2476,9 +2611,10 @@
             if (tr.ocrTries >= CONFIG.maxOcrReads) continue;
             if (tr.plate && tr.plateScore >= CONFIG.plateDoneScore && (tr.plateConf == null || tr.plateConf >= CONFIG.plateSureConf)) continue;
             if (now - tr.lastOcrAt < 200) continue;
-            const w = tr.box.x2 - tr.box.x1;
-            if (w < CONFIG.minOcrWidthPx) continue;
-            const priority = (w / Math.max(1, tr.ocrTries + 1)) * (!tr.plate ? 6 : 1);
+            const refBox = tr.plateBox || tr.box;
+            const w = refBox.x2 - refBox.x1;
+            if (!tr.isVehicle && w < CONFIG.minOcrWidthPx) continue;
+            const priority = (w / Math.max(1, tr.ocrTries + 1)) * (!tr.plate ? 6 : 1) + (tr.pendingTicket ? 500 : 0);
             if (priority > bestPriority) {
               bestPriority = priority;
               pick = tr;
@@ -2510,61 +2646,47 @@
       tr.ocrTries++;
       try {
         await getOcrWorkerSlot();
-        const fast = ocrPool.engine === "fast";
-        const take = tr.finished ? (fast ? CONFIG.snapsPerTrack : 2) : (fast ? 2 : 1);
+        if (ocrPool.engine !== "fast" || !ocrPool.fast) return;
+        const take = tr.finished ? CONFIG.snapsPerTrack : 2;
         const pending = tr.snaps.filter((sn) => !sn.done).slice(0, take);
         if (pending.length) updateFeedItem(tr);
 
         for (const snap of pending) {
           snap.done = true;
-          if (ocrPool.engine === "fast") {
-            if (snap.srcW < CONFIG.minFastPlateWidthPx) continue; // demasiado pequeña: sólo metería ruido
-            try {
-              // Se lee el mismo recorte con 3 variantes y se promedian las probabilidades (más estable que una sola lectura)
-              const variants = [{}, { stretch: true }, { pad: true }];
-              const w = Math.min(3, 0.5 + Math.sqrt(snap.area) / 40) / variants.length;
-              for (const v of variants) {
-                const P = await readPlateProbs(snap.canvas, v);
-                if (!tr.probSum || tr.probSum.length !== P.length) { tr.probSum = new Float32Array(P.length); tr.probW = 0; }
-                for (let i = 0; i < P.length; i++) tr.probSum[i] += P[i] * w;
-                tr.probW += w;
-              }
-              ocrPool.fastFails = 0;
-              const avg = new Float32Array(tr.probSum.length);
-              for (let i = 0; i < avg.length; i++) avg[i] = tr.probSum[i] / tr.probW;
-              const d = decodePlateProbs(avg);
-              const raw = d.text;
-              if (raw.length >= 5 && raw.length <= 8 && /[A-Z]/.test(raw) && /[0-9]/.test(raw) && d.conf >= 0.55 && d.minConf >= 0.25) {
-                acceptPlate(tr, d.formatted || raw, d.conf, tr.probW * 100);
-              }
-            } catch (e) {
-              console.warn("OCR (modelo placas):", e);
-              snap.done = false;
-              if (++ocrPool.fastFails >= 2) {
-                notify("El modelo OCR de placas falló; cambio a Tesseract.", "error", 5000);
-                await useTesseract();
-              }
-              break;
+          if (snap.srcW < CONFIG.minFastPlateWidthPx) continue; // demasiado pequeña: sólo metería ruido
+          try {
+            // Se lee el mismo recorte con 3 variantes y se promedian las probabilidades (más estable que una sola lectura)
+            const variants = [{}, { stretch: true }, { pad: true }];
+            const w = Math.min(3, 0.5 + Math.sqrt(snap.area) / 40) / variants.length;
+            for (const v of variants) {
+              const P = await readPlateProbs(snap.canvas, v);
+              if (!tr.probSum || tr.probSum.length !== P.length) { tr.probSum = new Float32Array(P.length); tr.probW = 0; }
+              for (let i = 0; i < P.length; i++) tr.probSum[i] += P[i] * w;
+              tr.probW += w;
             }
-          } else {
-            let text = null, weight = 0;
-            for (const canvas of buildOcrVariants(snap.canvas)) {
-              const { data } = await ocrPool.tess.recognize(canvas);
-              const t = cleanPlateText(data.text);
-              if (t) {
-                text = t.replace(/[^A-Z0-9]/g, "");
-                weight = Math.max(50, data.confidence || 50) + Math.min(45, Math.sqrt(snap.area));
-                break;
-              }
+            ocrPool.fastFails = 0;
+            const avg = new Float32Array(tr.probSum.length);
+            for (let i = 0; i < avg.length; i++) avg[i] = tr.probSum[i] / tr.probW;
+            const d = decodePlateProbs(avg);
+            const raw = d.text;
+            if (raw.length >= 5 && raw.length <= 8 && /[A-Z]/.test(raw) && /[0-9]/.test(raw) && d.conf >= 0.55 && d.minConf >= 0.25) {
+              acceptPlate(tr, d.formatted || raw, d.conf, tr.probW * 100);
             }
-            if (text) {
-              const r = addPlateVote(tr, text, weight);
-              acceptPlate(tr, r.text, null, r.score);
+          } catch (e) {
+            console.warn("OCR (cct_s_v2_global.onnx):", e);
+            snap.done = false;
+            if (++ocrPool.fastFails >= 3) {
+              notify("Error al ejecutar el modelo OCR ONNX (cct_s_v2_global.onnx).", "error", 5000);
             }
+            break;
           }
         }
         if (tr.finished) {
-          if (tr.pendingTicket && !tr.ticketed) issueTicket(tr);
+          if (tr.pendingTicket && !tr.ticketed && tr.plate) {
+            issueTicket(tr);
+          } else if (!tr.plate) {
+            tr.pendingTicket = false;
+          }
           updateFeedItem(tr, true);
         }
       } catch (err) {
@@ -2596,8 +2718,43 @@
 
     const easeOut = (x) => 1 - Math.pow(1 - x, 3);
 
+    function drawRadarZone(rect) {
+      if (!isCascadeMode() || !video.videoWidth || !video.videoHeight) return;
+      const x1 = rect.x + 10 * dpr;
+      const x2 = rect.x + video.videoWidth * rect.s - 10 * dpr;
+      const y1 = rect.y + video.videoHeight * CONFIG.radarLine1Ratio * rect.s;
+      const y2 = rect.y + video.videoHeight * CONFIG.radarLine2Ratio * rect.s;
+      const color = state.infractions ? "rgba(251,113,133,0.45)" : "rgba(34,211,238,0.35)";
+
+      octx.save();
+      octx.fillStyle = state.infractions ? "rgba(251,113,133,0.04)" : "rgba(34,211,238,0.035)";
+      octx.fillRect(x1, y1, x2 - x1, y2 - y1);
+
+      octx.strokeStyle = color;
+      octx.lineWidth = 1.6 * dpr;
+      octx.setLineDash([8 * dpr, 6 * dpr]);
+      octx.beginPath();
+      octx.moveTo(x1, y1); octx.lineTo(x2, y1);
+      octx.moveTo(x1, y2); octx.lineTo(x2, y2);
+      octx.stroke();
+      octx.setLineDash([]);
+
+      const tag = `ZONA RADAR · ${state.zoneMeters} m`;
+      octx.font = `700 ${10 * dpr}px "Space Grotesk", system-ui, sans-serif`;
+      const tw = octx.measureText(tag).width + 14 * dpr;
+      const th = 18 * dpr;
+      octx.fillStyle = "rgba(8,10,16,0.72)";
+      octx.beginPath();
+      octx.roundRect(x1 + 6 * dpr, y1 - th - 4 * dpr, tw, th, th / 2);
+      octx.fill();
+      octx.fillStyle = state.infractions ? "#fda4af" : "#67e8f9";
+      octx.textBaseline = "middle";
+      octx.fillText(tag, x1 + 13 * dpr, y1 - th / 2 - 4 * dpr);
+      octx.restore();
+    }
+
     function drawTrack(tr, rect, now) {
-      // Entre una detección y la siguiente, la caja se mueve con la velocidad estimada de la placa
+      // Entre una detección y la siguiente, la caja se mueve con la velocidad estimada
       // (predicción), así sigue al auto con fluidez en lugar de ir a saltos detrás de él.
       const ahead = video.paused ? 0 : Math.max(0, Math.min(0.4, video.currentTime - tr.lastT));
       const ox = tr.vx * ahead, oy = tr.vy * ahead;
@@ -2625,7 +2782,7 @@
       octx.save();
       octx.globalAlpha = alpha;
 
-      octx.fillStyle = violating ? "rgba(251,113,133,0.14)" : "rgba(34,211,238,0.08)";
+      octx.fillStyle = violating ? "rgba(251,113,133,0.14)" : "rgba(34,211,238,0.06)";
       octx.beginPath();
       octx.roundRect(x1, y1, x2 - x1, y2 - y1, 6 * dpr);
       octx.fill();
@@ -2634,7 +2791,7 @@
         octx.shadowColor = color;
         octx.shadowBlur = (12 + 6 * Math.sin(now / 160)) * dpr;
       }
-      const len = Math.min(x2 - x1, y2 - y1) * 0.42 + 4 * dpr;
+      const len = Math.min(x2 - x1, y2 - y1) * (tr.isVehicle ? 0.22 : 0.42) + 4 * dpr;
       octx.strokeStyle = color;
       octx.lineWidth = 2.6 * dpr;
       octx.lineCap = "round";
@@ -2647,9 +2804,23 @@
       octx.stroke();
       octx.shadowBlur = 0;
 
+      // En modo 3 modelos, dibuja también el recuadro de la placa encontrada dentro del vehículo
+      if (tr.isVehicle && tr.plateBox && now - (tr.plateLastSeen || 0) < 900) {
+        const px1 = rect.x + (tr.plateBox.x1 + ox) * rect.s;
+        const py1 = rect.y + (tr.plateBox.y1 + oy) * rect.s;
+        const px2 = rect.x + (tr.plateBox.x2 + ox) * rect.s;
+        const py2 = rect.y + (tr.plateBox.y2 + oy) * rect.s;
+        octx.strokeStyle = tr.plate ? "#34d399" : "#38bdf8";
+        octx.lineWidth = 2 * dpr;
+        octx.beginPath();
+        octx.roundRect(px1, py1, px2 - px1, py2 - py1, 3 * dpr);
+        octx.stroke();
+      }
+
       // Etiqueta
       const dots = ".".repeat(1 + (Math.floor(now / 350) % 3));
-      const plateText = tr.plate || "Leyendo" + dots;
+      const vehName = tr.isVehicle && CONFIG.vehicleClasses[tr.cls] ? CONFIG.vehicleClasses[tr.cls].name : null;
+      const plateText = tr.plate || (tr.isVehicle ? (tr.plateBox ? "Leyendo" + dots : vehName || "Vehículo") : "Leyendo" + dots);
       const speedText = tr.speedReady ? `${Math.round(tr.speed)} km/h` : "— km/h";
       const fsPlate = 12.5 * dpr, fsSpeed = 11.5 * dpr;
       octx.font = `700 ${fsPlate}px "JetBrains Mono", ui-monospace, monospace`;
@@ -2677,7 +2848,7 @@
       octx.stroke();
 
       octx.textBaseline = "middle";
-      octx.fillStyle = tr.plate ? "#fff" : "rgba(255,255,255,0.7)";
+      octx.fillStyle = tr.plate ? "#fff" : "rgba(255,255,255,0.75)";
       octx.font = `700 ${fsPlate}px "JetBrains Mono", ui-monospace, monospace`;
       octx.fillText(plateText, lx + 11 * dpr, ly + ph / 2 + 0.5 * dpr);
       octx.fillStyle = violating ? "#fff" : color;
@@ -2705,16 +2876,25 @@
       cx.roundRect(b.x1 * s - pad, b.y1 * s - pad, (b.x2 - b.x1) * s + pad * 2, (b.y2 - b.y1) * s + pad * 2, 6);
       cx.stroke();
 
+      if (tr.plateBox) {
+        const pb = tr.plateBox;
+        cx.strokeStyle = "#34d399";
+        cx.lineWidth = 2;
+        cx.beginPath();
+        cx.roundRect(pb.x1 * s - 2, pb.y1 * s - 2, (pb.x2 - pb.x1) * s + 4, (pb.y2 - pb.y1) * s + 4, 3);
+        cx.stroke();
+      }
+
       const label = `${Math.round(tr.speed)} km/h`;
       cx.font = "700 16px system-ui, sans-serif";
       const lw = cx.measureText(label).width + 18;
       cx.fillStyle = "#e11d48";
       cx.beginPath();
-      cx.roundRect(b.x1 * s - pad, b.y1 * s - pad - 30, lw, 24, 12);
+      cx.roundRect(b.x1 * s - pad, Math.max(4, b.y1 * s - pad - 30), lw, 24, 12);
       cx.fill();
       cx.fillStyle = "#fff";
       cx.textBaseline = "middle";
-      cx.fillText(label, b.x1 * s - pad + 9, b.y1 * s - pad - 18);
+      cx.fillText(label, b.x1 * s - pad + 9, Math.max(16, b.y1 * s - pad - 18));
 
       cx.fillStyle = "rgba(0,0,0,0.6)";
       cx.fillRect(0, c.height - 30, c.width, 30);
@@ -2732,8 +2912,12 @@
       octx.clearRect(0, 0, overlay.width, overlay.height);
       if (!state.source || video.readyState < 2 || !state.detecting) return;
 
-      if (state.model.ready && !state.model.busy && !video.paused && now - state.lastInferAt > 70) {
+      const primaryReady = isCascadeMode() ? state.vehicleModel.ready : state.model.ready;
+      const primaryBusy = isCascadeMode() ? state.vehicleModel.busy : state.model.busy;
+      if (primaryReady && !primaryBusy && !video.paused && now - state.lastInferAt > 70) {
         doInference();
+      } else if (isCascadeMode() && !video.paused) {
+        schedulePlateOnVehicle(now);
       }
 
       trackLifecycle(now);
@@ -2741,6 +2925,7 @@
       scheduleOcr(now);
 
       const rect = videoRect();
+      drawRadarZone(rect);
       for (const tr of state.tracks) if (tr.confirmed) drawTrack(tr, rect, now);
 
       if (now - state.lastFeedRefresh > 700) {
@@ -2828,7 +3013,8 @@
       }
 
       const sp = tr.speedReady ? `${Math.round(tr.maxSpeed || tr.speed)} km/h` : "— km/h";
-      el.querySelector(".feed-meta").textContent = `${sp} · ${tr.seenAt}`;
+      const vType = tr.isVehicle && CONFIG.vehicleClasses[tr.cls] ? `${CONFIG.vehicleClasses[tr.cls].name} · ` : "";
+      el.querySelector(".feed-meta").textContent = `${vType}${sp} · ${tr.seenAt}`;
 
       const badge = el.querySelector(".badge");
       if (tr.pendingTicket || tr.ticketed) {
@@ -2852,6 +3038,7 @@
     }
 
     function issueTicket(tr) {
+      if (!tr.plate) return; // Solo multar y notificar vehículos con placa efectivamente leída
       tr.ticketed = true;
       tr.pendingTicket = false;
       const now = new Date();
@@ -2919,7 +3106,14 @@
       $("toastPlate").textContent = t.plate;
       $("toastPlate").classList.toggle("unknown", t.plate === "NO LEGIBLE");
       $("toastSub").textContent = `${t.speed} km/h en zona de ${t.limit} km/h · +${t.excess} km/h`;
-      if (t.crop) $("toastCrop").src = t.crop;
+      const cropEl = $("toastCrop");
+      if (t.crop) {
+        cropEl.src = t.crop;
+        cropEl.style.display = "";
+      } else {
+        cropEl.removeAttribute("src");
+        cropEl.style.display = "none";
+      }
       const toast = $("toast");
       toast.classList.remove("show");
       void toast.offsetWidth;
@@ -2974,6 +3168,10 @@
     }
 
     function exportPdf(t) {
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        notify("No se cargó jsPDF (revisa tu conexión a internet) para generar el PDF.", "error", 5000);
+        return;
+      }
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF();
       doc.setFillColor(190, 18, 60);
@@ -3014,7 +3212,7 @@
       doc.setFontSize(8);
       doc.setTextColor(120, 120, 130);
       doc.text("Documento generado por un prototipo académico (Radar Vial · YOLO26). Sin validez oficial.", 105, 287, { align: "center" });
-      doc.save(`${t.folio}_${t.plate}.pdf`);
+      doc.save(`${t.folio}_${t.plate.replace(/\s+/g, "_")}.pdf`);
     }
 
     /* =========================================================
@@ -3099,10 +3297,10 @@
         notify("Primero elige un video o la cámara.");
         return;
       }
-      if (on && !state.model.ready) {
+      if (on && !state.vehicleModel.ready && !state.model.ready) {
         notify($("modelPill").dataset.state === "loading"
-          ? "El modelo todavía se está cargando, espera un momento…"
-          : "Carga los archivos .onnx (botón arriba a la derecha).", "error");
+          ? "Los modelos todavía se están cargando, espera un momento…"
+          : "Carga los archivos .onnx (yolo26n.onnx, best.onnx y cct_s_v2_global.onnx).", "error");
         return;
       }
       state.detecting = on;
@@ -3130,7 +3328,7 @@
     }
 
     function setLimit(v) {
-      state.limit = Math.max(20, Math.min(160, v));
+      state.limit = Math.max(10, Math.min(160, v));
       $("limitOut").textContent = `${state.limit} km/h`;
       $("limitSign").textContent = state.limit;
       if (state.infractions) $("infraState").textContent = `Multando > ${state.limit} km/h`;
@@ -3180,9 +3378,18 @@
     $("modelInput").addEventListener("change", (e) => { loadModelFile(e.target.files); e.target.value = ""; });
     $("modelInput2").addEventListener("change", (e) => { loadModelFile(e.target.files); e.target.value = ""; });
 
+    $("zoneMetersInput").addEventListener("input", (e) => {
+      state.zoneMeters = parseFloat(e.target.value);
+      $("zoneMetersOut").textContent = `${state.zoneMeters} m`;
+    });
+
     $("calibInput").addEventListener("input", (e) => {
       state.calib = parseFloat(e.target.value);
       $("calibOut").textContent = `×${state.calib.toFixed(1)}`;
+    });
+
+    $("onlySpeedingInput").addEventListener("change", (e) => {
+      state.onlySpeedingPlates = e.target.checked;
     });
 
     document.querySelectorAll(".tab").forEach((tab) => {

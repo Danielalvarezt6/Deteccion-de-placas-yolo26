@@ -1,103 +1,103 @@
-# Radar Vial · Detección de Placas e Infracciones (YOLO26 + ONNX)
+# Radar Vial · Detección de Placas, Velocidad e Infracciones (3 Modelos ONNX)
 
-*Integrantes del equipo: Daniel Alvarez Terrazas y Melina González Méndez*
+*Integrantes del equipo: Daniel Alvarez, Karol Burrola y Melina Gonzalez*
 
+Sistema de detección de vehículos, estimación de velocidad vial, lectura OCR de placas mexicanas y generación automática de boletas de infracción en PDF. Incluye el flujo de preparación de datos y entrenamiento de **YOLO26** con GPUs AMD ROCm o NVIDIA, la aplicación web/móvil 100% en navegador desplegada en **Netlify** y la presentación del proyecto.
 
-Sistema de detección de matrículas vehiculares, lectura OCR de placas mexicanas, estimación de velocidad y generación de boletas de infracción en PDF. Incluye el flujo de entrenamiento de **YOLO26** en clúster HPC con GPUs AMD ROCm y la aplicación web/móvil 100% en navegador lista para desplegar en **Netlify**.
+**Demo en vivo:** https://reconocimientodeplacas.netlify.app
 
 ---
 
-## Dataset
+## Arquitectura en Cascada (3 Modelos ONNX)
 
-El detector de matrículas se entrena con el dataset público **TENAX-LPR (v2)** de Roboflow Universe (licencia CC BY 4.0), exportado en formato YOLO26:
-- **Enlace del dataset:** https://universe.roboflow.com/fernandos-workspace-ovm5c/tenax-lpr/dataset/2
-- 223 imágenes, 1 clase (`placa`): 169 train · 32 valid · 22 test. Las etiquetas vienen como polígonos.
+La aplicación web ([index.html](index.html)) ejecuta 3 modelos en *Web Workers* mediante **ONNX Runtime Web** (WebGPU con respaldo automático a WebAssembly):
 
-### Data augmentation (`entrenamiento/preparar_dataset.py`)
-Como el dataset es pequeño, se generan **5 variantes por imagen de entrenamiento** más **1 recorte negativo (sin placa)** por imagen (169 → 1,176 imágenes) que simulan lo que ve la cámara de un celular apuntando a la calle:
+| Etapa | Modelo | Función |
+|---|---|---|
+| **1 · Vehículos y Velocidad** | `yolo26n.onnx` | Preentrenado en COCO. Corre en el fotograma completo detectando solo vehículos (`car`, `motorcycle`, `bus`, `truck`), hace seguimiento (IoU) y calcula la velocidad real. |
+| **2 · Detector de Placas** | `best.onnx` | Entrenado con YOLO26 sobre TENAX-LPR v2 aumentado. Corre únicamente sobre el **recorte congelado del vehículo** cuando está en zona cercana (o solo en autos con exceso si se activa el modo ahorro), logrando placas más grandes y nítidas. |
+| **3 · Lectura OCR** | `cct_s_v2_global.onnx` | Modelo ONNX global de `fast-plate-ocr` v2 (`uint8 [1, 64, 128, 3]`). Promedia probabilidades entre recortes y valida máscaras de placas mexicanas. |
 
-| Condición real | Transformación |
+### Estimación de velocidad y multas
+- **Zona Radar (2 líneas de control):** líneas virtuales sobre el pavimento (`56%` y `80%` del alto) con distancia real ajustable en *Ajustes del radar* (por defecto `12 m`). Al cruzar ambas líneas con la base inferior del vehículo `(cx, y2)`, calcula:
+  $$v_{\text{km/h}} = \frac{D}{|t_2 - t_1|} \times 3.6$$
+- **Velocidad continua:** antes de completar el cruce estima en tiempo real con regresión lineal sobre los últimos 2 s y la escala física de cada tipo de vehículo (`Auto: 1.80 m`, `Moto: 0.75 m`, `Camión: 2.45 m`, `Autobús: 2.55 m`).
+- **Reglas anti-error:** límite ajustable desde **`10 km/h` hasta `160 km/h`**, margen de tolerancia **`+5 km/h`**, mínimo **5 detecciones** (`minHitsTicket: 5`) y **solo se emiten multas y alertas cuando la placa fue efectivamente leída**.
+- **Boleta PDF (`jsPDF`):** incluye folio, fecha, velocidad, exceso, sanción en MXN, evidencia fotográfica completa del vehículo y recorte de la placa.
+
+---
+
+## Ejecutar en Local
+
+Con los 3 modelos (`yolo26n.onnx`, `best.onnx` y `cct_s_v2_global.onnx`) en la raíz del proyecto, levanta un servidor local:
+
+```bash
+python -m http.server 8000
+```
+
+Abre `http://localhost:8000` (arriba a la derecha aparecerá `3/3 modelos · GPU` o `3/3 modelos`).
+
+---
+
+## Dataset y Aumento de Datos
+
+El detector de matrículas (`best.onnx`) se entrena con el dataset público **TENAX-LPR (v2)** de Roboflow Universe (licencia CC BY 4.0):
+- **Enlace:** https://universe.roboflow.com/fernandos-workspace-ovm5c/tenax-lpr/dataset/2
+- 223 imágenes originales, 1 clase (`placa`): 169 train · 32 valid · 22 test.
+
+### Data augmentation ([`entrenamiento/preparar_dataset.py`](entrenamiento/preparar_dataset.py))
+Se generan **5 variantes por imagen de entrenamiento** más **1 recorte negativo (sin placa)** por imagen (169 → **1,176 imágenes**):
+
+| Condición real | Transformaciones (Albumentations) |
 |---|---|
 | Auto en movimiento / cámara movida | `MotionBlur`, `GaussianBlur`, `Defocus` |
-| Placa lejos o cerca, ángulo de la calle | `Affine` (escala 0.6–1.25, rotación ±8°, shear), `Perspective` |
+| Placa lejos, cerca o en ángulo | `Affine` (escala 0.6–1.25, rotación ±8°), `Perspective` |
 | Noche, contraluz, sombras, sol | `RandomBrightnessContrast`, `RandomGamma`, `CLAHE`, `RandomShadow`, `RandomSunFlare` |
 | Lluvia / niebla | `RandomRain`, `RandomFog` |
 | Sensor de celular / video comprimido | `GaussNoise`, `ISONoise`, `Downscale`, `ImageCompression` |
 
-- **Sin volteo horizontal**: los caracteres de la placa quedarían en espejo.
-- Los vértices del polígono se transforman como *keypoints*, así la caja final se ajusta a la placa aun después de perspectiva o rotación.
-- **Negativos**: recortes de las mismas fotos que no tocan ninguna placa (faros, emblemas, parrillas, pavimento, letreros). Enseñan al modelo qué *no* es una placa y reducen detecciones falsas. Se pueden agregar fotos propias sin placas con `--fondos carpeta/`. Cada negativo se revisa con el detector ya entrenado (`--verificar best.onnx`, activo por defecto) y se descarta si contiene una placa: algunas fotos de Roboflow traen placas sin etiquetar (p. ej. un segundo auto al fondo).
-- Se pueden combinar varios zips de Roboflow (p. ej. TENAX + fotogramas propios grabados con el celular): `--zip TENAX.zip MisFotos.zip`.
-- Solo se aumenta `train`; `valid` y `test` se dejan originales para que las métricas sean honestas.
+- **Sin volteo horizontal (`fliplr=0`):** evita que los caracteres de la placa queden en espejo.
+- **Negativos verificados:** recortes sin placas (faros, emblemas, parrillas, pavimento, letreros) para reducir falsos positivos.
+- `valid` y `test` se conservan sin aumento para obtener métricas honestas.
 
 ```bash
 pip install albumentations opencv-python-headless pyyaml
 python entrenamiento/preparar_dataset.py --zip "ruta/a/TENAX-LPR.v2i.yolo26.zip" --copias 5
 ```
-Genera `datasets/TENAX-LPR-aug/` con su `data.yaml` (la carpeta `datasets/` no se sube a git).
 
-### Evaluación
-Al terminar el entrenamiento, `yuca/yolo.py` evalúa el mejor modelo en **valid** y en **test** (imágenes que el modelo nunca vio) e imprime una tabla `[RESULTADOS]` con precision, recall, mAP50 y mAP50-95. Las gráficas quedan en `runs/tenax_lpr/<modelo>_placas/`, `..._val/` y `..._test/`.
-
-Variables de entorno opcionales: `MODEL=yolo26s.pt` (modelo más grande), `EPOCHS`, `BATCH`, `RUN_NAME`, `DATASET_DIR`.
-
-### Velocidad de la app
-- **Detector y OCR en la GPU (WebGPU)** dentro de *Web Workers*: si el navegador no tiene WebGPU, usan la CPU (WebAssembly) automáticamente. Medido en PC: detector **~45 ms** por fotograma con GPU contra ~340–415 ms con CPU; OCR ~75 ms por lectura sin bloquear la pantalla.
-- **OCR corregido**: `cct_s_v1_global.onnx` espera la placa a color (`uint8 [1, 64, 128, 3]`); antes se le enviaba en gris, fallaba y la app caía a Tesseract (más lento y menos preciso).
-- **Cajas fluidas**: entre detecciones, cada caja se mueve con la velocidad estimada de la placa en vez de ir a saltos.
-- WebGPU funciona en Chrome/Edge de escritorio y en Chrome para Android reciente; en Safari/iPhone depende de la versión de iOS.
-
-### Prueba del modelo nuevo en la app (test, 22 imágenes que el modelo nunca vio)
-- Modelo con umbral 0.6: **21/22 placas encontradas, 0 falsas**.
-- Pipeline completo de la app (con filtros de forma/tamaño/contraste relajados): **17/22, 0 falsas**. Las que pierde son sobre todo fotos giradas 90° o estiradas por Roboflow, que no ocurren con la cámara.
-- 162 imágenes negativas (sin placa): **0 falsas detecciones**.
-
-### Ajustes de la app para reducir errores
-- `confThreshold: 0.6` — elegido con la curva F1 del modelo (F1 0.98 en conf 0.70).
-- `minHitsTicket: 3` — la placa debe detectarse al menos 3 veces antes de multar.
-- `speedToleranceKmh: 5` — solo se multa por encima de límite + 5 km/h (compensa el temblor de las cajas).
+### Resultados en evaluación (conjunto `test`, nunca visto)
+- **21 / 22** placas detectadas en `test` (`conf = 0.6`, F1 máx. `0.98`).
+- **0 / 162** falsas detecciones en imágenes negativas sin placa.
+- Inferencia en navegador con WebGPU: **~45 ms** por fotograma en detector y **~75 ms** por lectura OCR en *Web Workers*.
 
 ---
 
-## Estructura del Proyecto
+## Entrenamiento y Exportación (`yuca/`)
 
-### 1. Entrenamiento y Exportación a ONNX (`yuca/`)
-Contiene los archivos utilizados para entrenar el modelo **YOLO26** en el clúster **La Yuca** (GPUs AMD Instinct `MI210` con ROCm) y exportarlo a ONNX:
-- (yolo.py): Script de entrenamiento y exportación. Convierte automáticamente las anotaciones poligonales de Roboflow a cajas delimitadoras estándar (`cls cx cy w h`), entrena a partir de `yolo26n.pt` durante 120 épocas (`imgsz=640`, `batch=64`), valida el mejor checkpoint (`best.pt`) y lo exporta a formato ONNX (`best.onnx`).
-- [`yolo_rocm.yml`]: Archivo de definición del entorno Conda (`yolo-rocm`) con Python 3.10, PyTorch para ROCm 7.2, `ultralytics`, `onnx`, `onnxslim` y `onnxruntime`.
-- [job_train.slurm]: Script de trabajo **SLURM** configurado para la partición GPU (`--gres=gpu:MI210:2`, módulo `rocm/7.2.2`), que activa el entorno `yolo-rocm` y lanza `python yolo.py`.
+- [`yuca/yolo.py`](yuca/yolo.py): convierte polígonos a cajas estándar, entrena a partir de `yolo26n.pt` (120 épocas, `imgsz=640`, `batch=64`), evalúa en `val` y `test`, y exporta `best.onnx`.
+- [`yuca/yolo_rocm.yml`](yuca/yolo_rocm.yml): entorno Conda (`yolo-rocm`) con Python 3.10, PyTorch ROCm 7.2, `ultralytics`, `onnx`, `onnxslim` y `onnxruntime`.
 
-#### Entrenamiento local (GPU NVIDIA de laptop, p. ej. RTX 3050 6GB):
+#### Entrenamiento local (GPU NVIDIA)
 ```bash
 pip install ultralytics onnx onnxslim onnxruntime
 BATCH=16 AMP=1 python yuca/yolo.py
 ```
-Al terminar, el script reemplaza `best.onnx` en la raíz del proyecto y la app web lo usa sin más cambios.
 
-#### Comandos de entrenamiento en el clúster:
+#### Entrenamiento en clúster AMD ROCm
 ```bash
-# 0. Desde tu PC: subir el dataset aumentado y el script actualizado
-scp datasets/TENAX-LPR-aug.zip yuca/yolo.py <usuario>@<host-yuca>:/lustre/home/<usuario>/YOLO/
-
-# 0b. En el clúster: descomprimir en YOLO/datasets/
-cd /lustre/home/<usuario>/YOLO
-mkdir -p datasets && unzip -o TENAX-LPR-aug.zip -d datasets/
-# 1. Crear el entorno Conda 
-conda env create -f yolo_rocm.yml
-
-# 2. Enviar el trabajo de entrenamiento a SLURM
-sbatch job_train.slurm
+conda env create -f yuca/yolo_rocm.yml
+conda activate yolo-rocm
+python yuca/yolo.py
 ```
 
 ---
 
-### 2. Aplicación Web y Móvil (Despliegue en Netlify)
-La aplicación web corre completamente en el navegador del usuario (PC o teléfono móvil) mediante **ONNX Runtime Web (WebAssembly)** sin requerir servidor backend:
-- [`index.html`](index.html): Interfaz interactiva con soporte para subir video o usar la cámara en vivo, botón de **Detectar placas** (YOLO26 en Web Worker + OCR en vivo con formato de placas mexicanas) y botón de **Modo infracciones** con límite de velocidad ajustable, alertas en tiempo real y descarga de boletas de multa en PDF (`jsPDF`).
-- [`best.onnx`](best.onnx): Modelo YOLO26 detector de matrículas exportado por `yuca/yolo.py`.
-- [`cct_s_v1_global.onnx`](cct_s_v1_global.onnx): Modelo ONNX de lectura OCR de placas (`fast-plate-ocr`).
+## Presentación del Proyecto
+
+- [`presentacion.html`](presentacion.html): presentación web 16:9 (8 diapositivas) con reproductor integrado de [`VIDEO EJEMPLO.mp4`](VIDEO%20EJEMPLO.mp4) y boleta de multa generada. Controles: `←` / `→`, `F` (pantalla completa) y `E` (edición rápida).
+
 ---
 
-## Despliegue en Netlify
- 
- https://detectorplacasdani.netlify.app/
+## Despliegue
+
+https://reconocimientodeplacas.netlify.app

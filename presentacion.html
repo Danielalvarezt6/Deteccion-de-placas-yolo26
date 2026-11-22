@@ -1,0 +1,2102 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radar Vial · Presentación del Proyecto</title>
+
+  <!-- Tipografías distintivas (Google Fonts) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap"
+    rel="stylesheet" />
+
+  <style>
+    /* ===========================================
+       CSS CUSTOM PROPERTIES (THEME)
+       =========================================== */
+    :root {
+      --stage-bg: #050608;
+      --slide-bg: #0b0d12;
+      --surface: #131722;
+      --surface-2: #1a2030;
+      --line: rgba(255, 255, 255, 0.09);
+      --line-strong: rgba(255, 255, 255, 0.18);
+
+      --text-primary: #f6f3ec;
+      --text-secondary: #a8b0c2;
+      --text-muted: #6c758a;
+
+      --amber: #ff6b2b;
+      --amber-soft: rgba(255, 107, 43, 0.14);
+      --emerald: #10b981;
+      --emerald-soft: rgba(16, 185, 129, 0.14);
+      --cyan: #22d3ee;
+      --cyan-soft: rgba(34, 211, 238, 0.14);
+      --crimson: #e11d48;
+      --crimson-soft: rgba(225, 29, 72, 0.16);
+
+      --font-display: 'Syne', sans-serif;
+      --font-body: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+      --duration-normal: 0.65s;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    /* ===========================================
+       FIXED 16:9 STAGE: MANDATORY BASE STYLES
+       Include this ENTIRE file in every presentation.
+       Slides are authored at 1920×1080 and scaled as a whole.
+       =========================================== */
+
+    /* 1. Lock the browser viewport */
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--stage-bg, #000);
+      font-family: var(--font-body);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 2. Full-window deck viewport */
+    .deck-viewport {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: var(--stage-bg, #000);
+    }
+
+    /* 3. Fixed 16:9 design canvas.
+       JavaScript sets transform: translate(...) scale(...). */
+    .deck-stage {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      transform-origin: 0 0;
+      background: var(--slide-bg, #fff);
+    }
+
+    /* 4. Slides stack inside the fixed stage.
+       Content must be laid out at 1920×1080, not reflowed per device. */
+    .slide {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      display: block;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      background: var(--slide-bg, #fff);
+      transition: opacity 0.45s var(--ease-out-expo);
+    }
+
+    .slide.active,
+    .slide.visible {
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+      z-index: 1;
+    }
+
+    /* 5. Keep media inside authored slide bounds */
+    img,
+    video,
+    canvas,
+    svg {
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    /* 6. Presentation chrome stays outside the slide design system */
+    .deck-controls {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      z-index: 1000;
+    }
+
+    /* 7. Print one fixed-size slide per page */
+    @media print {
+
+      html,
+      body {
+        width: 1920px;
+        height: auto;
+        overflow: visible;
+        background: #fff;
+      }
+
+      .deck-viewport {
+        position: static;
+        overflow: visible;
+        background: #fff;
+      }
+
+      .deck-stage {
+        position: static;
+        width: auto;
+        height: auto;
+        transform: none !important;
+        background: none;
+      }
+
+      .slide {
+        position: relative;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        width: 1920px;
+        height: 1080px;
+        break-after: page;
+        page-break-after: always;
+      }
+
+      .slide:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+
+      .deck-controls,
+      .edit-hotzone,
+      .edit-toggle,
+      .upload-ticket-btn {
+        display: none !important;
+      }
+    }
+
+    /* 8. Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+      }
+    }
+
+    /* ===========================================
+       ATMOSPHERE & BACKGROUND
+       =========================================== */
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 64px 64px;
+      pointer-events: none;
+    }
+
+    .glow-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      opacity: 0.22;
+    }
+
+    /* ===========================================
+       SLIDE CHROME & LAYOUT (1920x1080)
+       =========================================== */
+    .slide-inner {
+      position: relative;
+      z-index: 2;
+      width: 1920px;
+      height: 1080px;
+      padding: 68px 88px 72px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .slide-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 40px;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--amber);
+    }
+
+    .kicker-num {
+      display: inline-grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: var(--amber-soft);
+      border: 1px solid rgba(255, 107, 43, 0.4);
+      color: var(--amber);
+      font-size: 16px;
+    }
+
+    .slide-meta {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.02;
+    }
+
+    h2 {
+      font-family: var(--font-display);
+      font-size: 62px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.08;
+      margin-bottom: 18px;
+    }
+
+    .lead {
+      font-size: 27px;
+      line-height: 1.48;
+      color: var(--text-secondary);
+      max-width: 1320px;
+    }
+
+    .accent-amber {
+      color: var(--amber);
+    }
+
+    .accent-emerald {
+      color: var(--emerald);
+    }
+
+    .accent-cyan {
+      color: var(--cyan);
+    }
+
+    .accent-crimson {
+      color: #fb7185;
+    }
+
+    /* ===========================================
+       ANIMATIONS
+       =========================================== */
+    .reveal {
+      opacity: 0;
+      transform: translateY(26px);
+      transition: opacity var(--duration-normal) var(--ease-out-expo),
+        transform var(--duration-normal) var(--ease-out-expo);
+    }
+
+    .slide.visible .reveal {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .d1 {
+      transition-delay: 0.08s;
+    }
+
+    .d2 {
+      transition-delay: 0.18s;
+    }
+
+    .d3 {
+      transition-delay: 0.28s;
+    }
+
+    .d4 {
+      transition-delay: 0.38s;
+    }
+
+    .d5 {
+      transition-delay: 0.48s;
+    }
+
+    .d6 {
+      transition-delay: 0.58s;
+    }
+
+    /* ===========================================
+       COMPONENTS
+       =========================================== */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 34px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-accent-top {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: var(--amber);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 600;
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      color: var(--text-primary);
+    }
+
+    .pill-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--emerald);
+    }
+
+    .plate-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 26px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ffffff, #e2e8f0);
+      color: #0b0d12;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 32px;
+      letter-spacing: 0.08em;
+      border: 3px solid #64748b;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    /* ===========================================
+       SLIDE 1: PORTADA
+       =========================================== */
+    .hero-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.25fr 0.75fr;
+      gap: 56px;
+      align-items: center;
+    }
+
+    .hero-title {
+      font-size: 108px;
+      margin: 26px 0 28px;
+    }
+
+    .hero-sub {
+      font-size: 30px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+      max-width: 920px;
+      margin-bottom: 42px;
+    }
+
+    .hero-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 54px;
+    }
+
+    .team-strip {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding-top: 28px;
+      border-top: 1px solid var(--line);
+    }
+
+    .team-label {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .team-names {
+      font-size: 25px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .team-sep {
+      color: var(--amber);
+      font-weight: 800;
+    }
+
+    .radar-visual {
+      position: relative;
+      height: 680px;
+      border-radius: 32px;
+      background: radial-gradient(circle at 50% 48%, rgba(255, 107, 43, 0.16), var(--surface) 68%);
+      border: 1px solid var(--line-strong);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 36px;
+      overflow: hidden;
+    }
+
+    .radar-rings {
+      position: relative;
+      flex: 1;
+      display: grid;
+      place-items: center;
+    }
+
+    .ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 1.5px dashed rgba(255, 255, 255, 0.14);
+    }
+
+    .ring-1 {
+      width: 220px;
+      height: 220px;
+      border-color: rgba(255, 107, 43, 0.45);
+    }
+
+    .ring-2 {
+      width: 360px;
+      height: 360px;
+      border-color: rgba(34, 211, 238, 0.3);
+    }
+
+    .ring-3 {
+      width: 500px;
+      height: 500px;
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .radar-center {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .radar-speed-badge {
+      padding: 10px 22px;
+      border-radius: 999px;
+      background: var(--crimson);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 700;
+      box-shadow: 0 10px 28px rgba(225, 29, 72, 0.45);
+    }
+
+    .radar-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .mini-stat {
+      background: rgba(11, 13, 18, 0.72);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px 18px;
+    }
+
+    .mini-stat small {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .mini-stat strong {
+      font-family: var(--font-display);
+      font-size: 26px;
+      color: var(--text-primary);
+    }
+
+    /* ===========================================
+       SLIDE 2: LOS 3 MODELOS (SENCILLO)
+       =========================================== */
+    .pipeline-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 56px 1fr 56px 1fr;
+      align-items: stretch;
+      margin-top: 36px;
+    }
+
+    .pipe-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--amber);
+      font-size: 42px;
+      font-weight: 800;
+    }
+
+    .model-card {
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 26px;
+      padding: 38px 34px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .model-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    .model-file {
+      font-family: var(--font-mono);
+      font-size: 23px;
+      font-weight: 700;
+      padding: 12px 18px;
+      border-radius: 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      margin-bottom: 24px;
+      display: inline-block;
+    }
+
+    .model-card h3 {
+      font-family: var(--font-display);
+      font-size: 36px;
+      margin-bottom: 16px;
+      line-height: 1.15;
+    }
+
+    .model-card p {
+      font-size: 23px;
+      line-height: 1.52;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .model-io {
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      font-size: 20px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    /* ===========================================
+       SLIDE 3: DATASET (SENCILLO)
+       =========================================== */
+    .dataset-layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 36px;
+      margin-top: 30px;
+    }
+
+    .big-num-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin: 24px 0;
+    }
+
+    .big-num {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+    }
+
+    .big-num strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 56px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .big-num span {
+      font-size: 19px;
+      color: var(--text-secondary);
+    }
+
+    .list-clean {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-top: 22px;
+    }
+
+    .list-clean li {
+      display: flex;
+      gap: 18px;
+      align-items: flex-start;
+      font-size: 23px;
+      line-height: 1.46;
+      color: var(--text-secondary);
+    }
+
+    .list-clean li strong {
+      color: var(--text-primary);
+    }
+
+    .bullet-icon {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 18px;
+      margin-top: 2px;
+      background: var(--emerald-soft);
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .aug-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .aug-item {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+    }
+
+    .aug-item h4 {
+      font-size: 23px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: var(--text-primary);
+    }
+
+    .aug-item p {
+      font-size: 20px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+    }
+
+    .callout-bar {
+      margin-top: 22px;
+      padding: 20px 24px;
+      border-radius: 16px;
+      background: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      font-size: 21px;
+      line-height: 1.45;
+      color: var(--text-primary);
+    }
+
+    /* ===========================================
+       SLIDE 4: RESULTADOS
+       =========================================== */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-top: 34px;
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 24px;
+      padding: 36px 32px;
+    }
+
+    .kpi-val {
+      font-family: var(--font-display);
+      font-size: 80px;
+      font-weight: 800;
+      line-height: 1;
+      margin-bottom: 16px;
+    }
+
+    .kpi-title {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .kpi-desc {
+      font-size: 21px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+    }
+
+    .guardrails {
+      margin-top: 34px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+    }
+
+    .guard-card {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 28px;
+    }
+
+    .guard-card h4 {
+      font-family: var(--font-display);
+      font-size: 24px;
+      color: var(--emerald);
+      margin-bottom: 10px;
+    }
+
+    .guard-card p {
+      font-size: 21px;
+      line-height: 1.48;
+      color: var(--text-secondary);
+    }
+
+    /* ===========================================
+       SLIDE 5: COMO MEDIMOS LA VELOCIDAD (SENCILLO)
+       =========================================== */
+    .speed-layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.02fr 0.98fr;
+      gap: 40px;
+      margin-top: 28px;
+      align-items: stretch;
+    }
+
+    .formula-box {
+      background: linear-gradient(135deg, rgba(255, 107, 43, 0.16), var(--surface-2));
+      border: 1.5px solid rgba(255, 107, 43, 0.45);
+      border-radius: 24px;
+      padding: 30px 32px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .formula-main {
+      font-family: var(--font-mono);
+      font-size: 46px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .formula-sub {
+      margin-top: 12px;
+      font-size: 21px;
+      color: var(--text-secondary);
+    }
+
+    .road-diagram {
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 26px;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .road-svg-wrap {
+      flex: 1;
+      display: grid;
+      place-items: center;
+      margin: 10px 0 16px;
+    }
+
+    .example-chip {
+      background: var(--emerald-soft);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      border-radius: 16px;
+      padding: 20px 24px;
+      font-size: 22px;
+      line-height: 1.45;
+      color: var(--text-primary);
+    }
+
+    /* ===========================================
+       SLIDE 6: DEMO EN VIVO
+       =========================================== */
+    .demo-layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.38fr 0.62fr;
+      gap: 36px;
+      margin-top: 24px;
+      align-items: stretch;
+    }
+
+    .video-frame {
+      background: #050608;
+      border: 1.5px solid var(--line-strong);
+      border-radius: 26px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    }
+
+    .video-chrome {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 10px;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      color: var(--text-secondary);
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--emerald);
+      font-weight: 700;
+    }
+
+    .live-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 12px var(--emerald);
+    }
+
+    .demo-video-wrap {
+      flex: 1;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #000;
+      display: grid;
+      place-items: center;
+      min-height: 0;
+    }
+
+    .demo-video-wrap video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .demo-notes {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      justify-content: space-between;
+    }
+
+    .demo-step {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 26px;
+    }
+
+    .demo-step h4 {
+      font-family: var(--font-display);
+      font-size: 25px;
+      margin-bottom: 8px;
+    }
+
+    .demo-step p {
+      font-size: 20px;
+      line-height: 1.45;
+      color: var(--text-secondary);
+    }
+
+    /* ===========================================
+       SLIDE 7: BOLETA DE MULTA GENERADA (RECORTE PDF)
+       =========================================== */
+    .ticket-layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 44px;
+      margin-top: 22px;
+      align-items: center;
+    }
+
+    .pdf-frame-card {
+      background: #ffffff;
+      color: #141418;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      height: 750px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .pdf-uploaded-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #ffffff;
+      display: none;
+    }
+
+    .pdf-uploaded-img.has-img {
+      display: block;
+    }
+
+    .pdf-fallback {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .pdf-fallback.hidden {
+      display: none;
+    }
+
+    .pdf-header {
+      background: #be123c;
+      color: #ffffff;
+      padding: 22px 28px;
+      text-align: center;
+    }
+
+    .pdf-header h3 {
+      font-family: var(--font-body);
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      margin-bottom: 5px;
+    }
+
+    .pdf-header span {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      opacity: 0.92;
+    }
+
+    .pdf-body {
+      padding: 24px 30px 18px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .pdf-top-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .pdf-plate-box {
+      border: 2px solid #788296;
+      border-radius: 10px;
+      padding: 12px 18px;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 34px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: #141418;
+      margin-top: 6px;
+    }
+
+    .pdf-kv {
+      font-size: 17px;
+      line-height: 1.65;
+      color: #1e2430;
+    }
+
+    .pdf-evidence-box {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid #cbd5e1;
+      background: #0f172a;
+      margin-top: 6px;
+      height: 240px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .pdf-evidence-placeholder {
+      flex: 1;
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      color: #f8fafc;
+    }
+
+    .pdf-footer-strip {
+      background: rgba(0, 0, 0, 0.78);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 7px 14px;
+    }
+
+    .pdf-crop-plate {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 22px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #f8fafc, #cbd5e1);
+      border: 4px solid #1e1b24;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 26px;
+      color: #0f172a;
+      letter-spacing: 0.06em;
+      margin-top: 6px;
+    }
+
+    .pdf-crop-plate small {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: #475569;
+    }
+
+    .pdf-disclaimer {
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+    }
+
+    .upload-ticket-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 8px;
+      padding: 14px 22px;
+      border-radius: 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .upload-ticket-btn:hover {
+      background: var(--amber-soft);
+      border-color: var(--amber);
+    }
+
+    /* ===========================================
+       SLIDE 8: CIERRE MINIMALISTA
+       =========================================== */
+    .closing-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      gap: 44px;
+    }
+
+    .closing-title {
+      font-size: 108px;
+      line-height: 1.05;
+    }
+
+    .closing-link {
+      font-family: var(--font-mono);
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--cyan);
+      padding: 20px 42px;
+      border-radius: 999px;
+      background: var(--cyan-soft);
+      border: 1.5px solid rgba(34, 211, 238, 0.45);
+      text-decoration: none;
+    }
+
+    /* ===========================================
+       CONTROLES Y EDICION INLINE
+       =========================================== */
+    .deck-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(15, 18, 28, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(14px);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .ctrl-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.2s ease, transform 0.15s ease;
+    }
+
+    .ctrl-btn:hover {
+      background: rgba(255, 107, 43, 0.35);
+    }
+
+    .ctrl-btn:active {
+      transform: scale(0.92);
+    }
+
+    .progress-track {
+      width: 160px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 12.5%;
+      background: var(--amber);
+      transition: width 0.35s var(--ease-out-expo);
+    }
+
+    .edit-hotzone {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 84px;
+      height: 84px;
+      z-index: 10000;
+      cursor: pointer;
+    }
+
+    .edit-toggle {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      height: 42px;
+      padding: 0 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(15, 18, 28, 0.9);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, background 0.2s ease;
+      z-index: 10001;
+    }
+
+    .edit-toggle.show,
+    .edit-toggle.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .edit-toggle.active {
+      background: var(--amber);
+      border-color: var(--amber);
+      color: #0b0d12;
+      font-weight: 700;
+    }
+
+    body.editing-mode [contenteditable="true"] {
+      outline: 2px dashed rgba(255, 107, 43, 0.6);
+      outline-offset: 4px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="edit-hotzone" title="Modo edición (E)"></div>
+  <button class="edit-toggle" id="editToggle" title="Editar textos (E) · Guardar (Ctrl+S)">✏️ Editar (E)</button>
+
+  <div class="deck-viewport">
+    <main class="deck-stage" id="deckStage">
+
+      <!-- =====================================================
+           SLIDE 1: PORTADA
+           ===================================================== -->
+      <section class="slide active visible" data-slide="1">
+        <div class="glow-orb" style="width:680px;height:680px;background:var(--amber);top:-180px;right:-140px;"></div>
+        <div class="glow-orb" style="width:520px;height:520px;background:var(--cyan);bottom:-200px;left:-120px;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">01</span>Aplicación del YOLO</span>
+            <span class="slide-meta">Radar Vial · YOLO26</span>
+          </div>
+
+          <div class="hero-grid">
+            <div>
+              <h1 class="hero-title reveal d1">Radar Vial<br /><span class="accent-amber">Inteligente</span></h1>
+              <p class="hero-sub reveal d2">
+                Aplicación web que detecta vehículos, calcula su velocidad, lee las placas mexicanas en vivo y genera
+                boletas de multa en PDF.
+              </p>
+
+              <div class="hero-pills reveal d3">
+                <span class="pill"><span class="pill-dot"></span>3 Modelos</span>
+                <span class="pill"><span class="pill-dot" style="background:var(--amber)"></span>YOLO26 + Lectura de
+                  Placas</span>
+                <span class="pill"><span class="pill-dot" style="background:var(--cyan)"></span>100% en el
+                  navegador</span>
+              </div>
+
+              <div class="team-strip reveal d4">
+                <div>
+                  <div class="team-label">Equipo</div>
+                  <div class="team-names">
+                    <span>Daniel Alvarez</span>
+                    <span class="team-sep">·</span>
+                    <span>Karol Burrola</span>
+                    <span class="team-sep">·</span>
+                    <span>Melina Gonzalez</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="radar-visual reveal d3">
+              <div class="video-chrome">
+                <span class="live-badge"><span class="live-dot"></span>RADAR VIAL EN VIVO</span>
+                <span>PC Y CELULAR</span>
+              </div>
+              <div class="radar-rings">
+                <span class="ring ring-3"></span>
+                <span class="ring ring-2"></span>
+                <span class="ring ring-1"></span>
+                <div class="radar-center">
+                  <div class="plate-chip">NFE-31-08</div>
+                  <div class="radar-speed-badge">EXCESO · 72 km/h</div>
+                </div>
+              </div>
+              <div class="radar-stats">
+                <div class="mini-stat">
+                  <small>Modelos</small>
+                  <strong>3 en línea</strong>
+                </div>
+                <div class="mini-stat">
+                  <small>Acierto</small>
+                  <strong class="accent-emerald">21 / 22</strong>
+                </div>
+                <div class="mini-stat">
+                  <small>Falsas</small>
+                  <strong class="accent-cyan">0 / 162</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 2: COMO FUNCIONA (3 MODELOS SENCILLO)
+           ===================================================== -->
+      <section class="slide" data-slide="2">
+        <div class="glow-orb"
+          style="width:620px;height:620px;background:var(--cyan);top:120px;left:640px;opacity:0.14;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">02</span>Qué modelos usamos</span>
+            <span class="slide-meta">3 pasos en cadena</span>
+          </div>
+
+          <h2 class="reveal d1">3 modelos trabajando juntos</h2>
+          <p class="lead reveal d2">Dividimos el trabajo en tres pasos sencillos para que el sistema sea rápido y pueda
+            leer las placas con claridad.</p>
+
+          <div class="pipeline-grid">
+            <div class="model-card reveal d2">
+              <div class="card-accent-top" style="background:var(--cyan)"></div>
+              <div>
+                <div class="model-badge accent-cyan">PASO 1 · VEHÍCULOS</div>
+                <div class="model-file">yolo26n.onnx</div>
+                <h3>Encuentra y sigue autos</h3>
+                <p>Revisa el video completo y detecta únicamente vehículos: <strong>autos, motos, autobuses y
+                    camiones</strong>. Los sigue mientras se mueven para medir su velocidad.</p>
+              </div>
+              <div class="model-io">
+                <strong>Resultado:</strong> ubicación y velocidad de cada vehículo.
+              </div>
+            </div>
+
+            <div class="pipe-arrow reveal d3">→</div>
+
+            <div class="model-card reveal d3">
+              <div class="card-accent-top" style="background:var(--amber)"></div>
+              <div>
+                <div class="model-badge accent-amber">PASO 2 · PLACAS</div>
+                <div class="model-file">best.onnx</div>
+                <h3>Ubica la placa</h3>
+                <p>Es el modelo que entrenamos nosotros. En lugar de ver toda la calle, recibe solo el <strong>recorte
+                    del auto cercano</strong>, así la placa se ve mucho más grande y clara.</p>
+              </div>
+              <div class="model-io">
+                <strong>Resultado:</strong> recorte exacto y nítido de la matrícula.
+              </div>
+            </div>
+
+            <div class="pipe-arrow reveal d4">→</div>
+
+            <div class="model-card reveal d4">
+              <div class="card-accent-top" style="background:var(--emerald)"></div>
+              <div>
+                <div class="model-badge accent-emerald">PASO 3 · LECTURA</div>
+                <div class="model-file">cct_s_v2_global.onnx</div>
+                <h3>Lee el texto de la placa</h3>
+                <p>Recibe el recorte de la placa y lee directamente las letras y números, ajustándolos a los formatos
+                  oficiales de placas mexicanas.</p>
+              </div>
+              <div class="model-io">
+                <strong>Resultado:</strong> matrícula lista para la multa (ej. <strong>NFE-31-08</strong>).
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 3: DATASET Y COMO LO ENTRENAMOS (SENCILLO)
+           ===================================================== -->
+      <section class="slide" data-slide="3">
+        <div class="glow-orb"
+          style="width:600px;height:600px;background:var(--amber);bottom:-200px;left:180px;opacity:0.15;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">03</span>Dataset y preparación</span>
+            <span class="slide-meta">TENAX-LPR · Aumento de datos</span>
+          </div>
+
+          <h2 class="reveal d1">Con qué datos entrenamos el detector</h2>
+          <p class="lead reveal d2">Usamos el dataset público <strong>TENAX-LPR</strong> con fotos reales de placas y
+            creamos nuevas variaciones para que el modelo funcione en cualquier situación de la calle.</p>
+
+          <div class="dataset-layout">
+            <div class="card reveal d2" style="display:flex;flex-direction:column;justify-content:space-between;">
+              <div>
+                <div class="model-badge accent-amber">DE POCAS FOTOS A UN DATASET COMPLETO</div>
+                <div class="big-num-row">
+                  <div class="big-num">
+                    <strong class="accent-cyan">223</strong>
+                    <span>Fotos originales<br />(entrenamiento, validación y prueba)</span>
+                  </div>
+                  <div class="big-num">
+                    <strong class="accent-emerald">1,176</strong>
+                    <span>Imágenes finales para entrenar</span>
+                  </div>
+                </div>
+                <ul class="list-clean">
+                  <li><span class="bullet-icon">1</span>
+                    <div>Generamos <strong>5 versiones distintas</strong> por cada foto de entrenamiento para simular
+                      condiciones reales.</div>
+                  </li>
+                  <li><span class="bullet-icon">2</span>
+                    <div>Dejamos las fotos de <strong>prueba originales</strong> para medir si realmente funciona en
+                      imágenes nuevas.</div>
+                  </li>
+                  <li><span class="bullet-icon">3</span>
+                    <div>Lo entrenamos con <strong>YOLO26</strong> y lo exportamos a <strong>ONNX</strong> para usarlo
+                      directo en la página web.</div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="card reveal d3">
+              <div class="model-badge accent-cyan">ESCENARIOS QUE SIMULAMOS</div>
+              <div class="aug-grid">
+                <div class="aug-item">
+                  <h4>Movimiento</h4>
+                  <p>Autos avanzando rápido o cámara ligeramente movida.</p>
+                </div>
+                <div class="aug-item">
+                  <h4>Distintos ángulos</h4>
+                  <p>Placas vistas de lado, más lejos o más cerca de la cámara.</p>
+                </div>
+                <div class="aug-item">
+                  <h4>Luz y sombras</h4>
+                  <p>Sol directo, contraluz, sombras de árboles y poca luz.</p>
+                </div>
+                <div class="aug-item">
+                  <h4>Clima y celular</h4>
+                  <p>Lluvia, neblina y calidad normal de video grabado con teléfono.</p>
+                </div>
+              </div>
+              <div class="callout-bar">
+                <strong>Fotos sin placa:</strong> también agregamos recortes de faros, defensas, calle y letreros para
+                enseñarle al modelo a <em>no confundirse</em> con otros objetos.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 4: RESULTADOS EN PRUEBAS
+           ===================================================== -->
+      <section class="slide" data-slide="4">
+        <div class="glow-orb"
+          style="width:620px;height:620px;background:var(--emerald);top:100px;right:-140px;opacity:0.15;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">04</span>Resultados</span>
+            <span class="slide-meta">Pruebas en imágenes nuevas</span>
+          </div>
+
+          <h2 class="reveal d1">Cómo respondió en las pruebas</h2>
+          <p class="lead reveal d2">Probamos el modelo en fotos que nunca había visto durante el entrenamiento y en
+            imágenes de calle sin ninguna placa.</p>
+
+          <div class="kpi-grid">
+            <div class="kpi-card reveal d2">
+              <div class="kpi-val accent-emerald">21 / 22</div>
+              <div class="kpi-title">Placas detectadas</div>
+              <div class="kpi-desc">95.5% de acierto en imágenes nuevas de prueba.</div>
+            </div>
+            <div class="kpi-card reveal d3">
+              <div class="kpi-val accent-cyan">0 / 162</div>
+              <div class="kpi-title">Falsas detecciones</div>
+              <div class="kpi-desc">Ningún faro, defensa ni letrero fue confundido con una placa.</div>
+            </div>
+            <div class="kpi-card reveal d4">
+              <div class="kpi-val accent-amber">En vivo</div>
+              <div class="kpi-title">Rápido en navegador</div>
+              <div class="kpi-desc">Funciona en tiempo real en computadora y celular.</div>
+            </div>
+          </div>
+
+          <div class="guardrails reveal d5">
+            <div class="guard-card">
+              <h4>1 · Confirmación</h4>
+              <p>El vehículo debe aparecer varias veces seguidas antes de poder generar una infracción.</p>
+            </div>
+            <div class="guard-card">
+              <h4>2 · Margen de +5 km/h</h4>
+              <p>Se aplica una tolerancia de 5 km/h sobre el límite para evitar multas por pequeñas variaciones.</p>
+            </div>
+            <div class="guard-card">
+              <h4>3 · Solo placas leídas</h4>
+              <p>Únicamente se muestran alertas y multas cuando el sistema logró leer claramente la matrícula.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 5: COMO MEDIMOS LA VELOCIDAD (SENCILLO)
+           ===================================================== -->
+      <section class="slide" data-slide="5">
+        <div class="glow-orb"
+          style="width:600px;height:600px;background:var(--amber);top:-120px;left:50%;opacity:0.14;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">05</span>Velocidad del vehículo</span>
+            <span class="slide-meta">Física básica aplicada al video</span>
+          </div>
+
+          <h2 class="reveal d1">¿Cómo medimos la velocidad del auto?</h2>
+          <p class="lead reveal d2">Usamos la fórmula clásica de física: <strong>distancia entre tiempo</strong>,
+            apoyándonos en dos líneas dibujadas sobre la calle.</p>
+
+          <div class="speed-layout">
+            <div class="reveal d2" style="display:flex;flex-direction:column;justify-content:space-between;">
+              <div class="formula-box">
+                <div class="formula-main">Velocidad = (Distancia ÷ Tiempo) × 3.6</div>
+                <div class="formula-sub">Multiplicamos por <strong>3.6</strong> para convertir metros por segundo a
+                  <strong>km/h</strong>.
+                </div>
+              </div>
+
+              <div class="card" style="flex:1;padding:30px 34px;">
+                <ul class="list-clean" style="margin-top:0;gap:22px;">
+                  <li><span class="bullet-icon">1</span>
+                    <div><strong>Seguimos cada auto:</strong> el primer modelo mantiene el rastro de cada vehículo
+                      cuadro por cuadro desde donde tocan sus llantas con el suelo.</div>
+                  </li>
+                  <li><span class="bullet-icon">2</span>
+                    <div><strong>Zona Radar (2 líneas):</strong> marcamos un tramo real de la calle (por ejemplo, 12
+                      metros) y contamos cuántos segundos tarda el auto en pasar de la primera línea a la segunda.</div>
+                  </li>
+                  <li><span class="bullet-icon">3</span>
+                    <div><strong>Estimación continua:</strong> antes de terminar el cruce, también estimamos su
+                      velocidad suavizando su avance de los últimos segundos para que el número sea estable.</div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="road-diagram reveal d3">
+              <div class="model-badge accent-cyan" style="margin-bottom:0;">EJEMPLO VISUAL · ZONA RADAR</div>
+              <div class="road-svg-wrap">
+                <svg viewBox="0 0 680 390" width="100%" height="100%" aria-label="Diagrama de Zona Radar">
+                  <polygon points="220,25 460,25 630,365 50,365" fill="#181d2b" stroke="#2c354c" stroke-width="2" />
+                  <line x1="340" y1="30" x2="340" y2="360" stroke="#475569" stroke-width="4" stroke-dasharray="18 16" />
+                  <polygon points="150,145 530,145 595,295 85,295" fill="rgba(34,211,238,0.10)" />
+
+                  <!-- Línea 2 arriba (al fondo: termina el cruce) -->
+                  <line x1="55" y1="145" x2="625" y2="145" stroke="#ff6b2b" stroke-width="3.5"
+                    stroke-dasharray="12 8" />
+                  <rect x="60" y="108" width="190" height="30" rx="15" fill="#0b0d12" stroke="#ff6b2b"
+                    stroke-width="1.5" />
+                  <text x="155" y="128" fill="#ffb088" font-family="JetBrains Mono" font-size="14" font-weight="700"
+                    text-anchor="middle">LÍNEA 2 · Termina</text>
+
+                  <!-- Línea 1 abajo (primer plano: entra el auto) -->
+                  <line x1="35" y1="295" x2="645" y2="295" stroke="#22d3ee" stroke-width="3.5"
+                    stroke-dasharray="12 8" />
+                  <rect x="445" y="305" width="175" height="30" rx="15" fill="#0b0d12" stroke="#22d3ee"
+                    stroke-width="1.5" />
+                  <text x="532" y="325" fill="#67e8f9" font-family="JetBrains Mono" font-size="14" font-weight="700"
+                    text-anchor="middle">LÍNEA 1 · Inicia</text>
+
+                  <!-- Flecha de dirección del auto (de abajo hacia arriba) -->
+                  <line x1="215" y1="275" x2="215" y2="178" stroke="#67e8f9" stroke-width="3" />
+                  <polygon points="215,165 207,182 223,182" fill="#67e8f9" />
+                  <text x="165" y="228" fill="#a8b0c2" font-family="JetBrains Mono" font-size="12" font-weight="600"
+                    text-anchor="middle">Avanza</text>
+
+                  <line x1="615" y1="152" x2="615" y2="288" stroke="#10b981" stroke-width="3" />
+                  <circle cx="615" cy="152" r="5" fill="#10b981" />
+                  <circle cx="615" cy="288" r="5" fill="#10b981" />
+                  <rect x="556" y="204" width="114" height="34" rx="10" fill="#064e3b" stroke="#10b981"
+                    stroke-width="1.5" />
+                  <text x="613" y="226" fill="#a7f3d0" font-family="JetBrains Mono" font-size="16" font-weight="700"
+                    text-anchor="middle">12 metros</text>
+
+                  <rect x="275" y="180" width="130" height="90" rx="14" fill="rgba(255,107,43,0.18)" stroke="#ff6b2b"
+                    stroke-width="3" />
+                  <rect x="295" y="196" width="90" height="34" rx="8" fill="#1e293b" stroke="#94a3b8"
+                    stroke-width="1.5" />
+                  <rect x="315" y="242" width="50" height="16" rx="4" fill="#f8fafc" stroke="#10b981"
+                    stroke-width="2" />
+                  <circle cx="340" cy="270" r="8" fill="#10b981" stroke="#fff" stroke-width="2.5" />
+                  <text x="340" y="168" fill="#ffffff" font-family="JetBrains Mono" font-size="15" font-weight="700"
+                    text-anchor="middle">Auto · 72 km/h</text>
+                </svg>
+              </div>
+              <div class="example-chip">
+                <strong>Ejemplo:</strong> si la zona mide <strong>12 metros</strong> y el auto tarda <strong>0.6
+                  segundos</strong> en cruzar → <strong>(12 ÷ 0.6) × 3.6 = 72 km/h</strong>.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 6: DEMO EN VIVO (VIDEO EJEMPLO.MP4)
+           ===================================================== -->
+      <section class="slide" data-slide="6">
+        <div class="glow-orb"
+          style="width:620px;height:620px;background:var(--cyan);bottom:-180px;left:-100px;opacity:0.16;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">06</span>Demostración</span>
+            <span class="slide-meta">VIDEO EJEMPLO.mp4</span>
+          </div>
+
+          <h2 class="reveal d1">El sistema funcionando en tráfico real</h2>
+
+          <div class="demo-layout">
+            <div class="video-frame reveal d2">
+              <div class="video-chrome">
+                <span class="live-badge"><span class="live-dot"></span>VIDEO EJEMPLO.mp4</span>
+                <span>Detección y velocidad en vivo</span>
+              </div>
+              <div class="demo-video-wrap">
+                <video id="demoVideo" src="./VIDEO%20EJEMPLO.mp4" controls playsinline muted loop
+                  preload="metadata"></video>
+              </div>
+            </div>
+
+            <div class="demo-notes reveal d3">
+              <div class="demo-step">
+                <div class="model-badge accent-cyan" style="margin-bottom:8px;">01 · SEGUIMIENTO</div>
+                <h4>Vehículos y velocidad</h4>
+                <p>Cada auto aparece con su recuadro y su velocidad actualizada mientras avanza por la avenida.</p>
+              </div>
+              <div class="demo-step">
+                <div class="model-badge accent-amber" style="margin-bottom:8px;">02 · LECTURA</div>
+                <h4>Placas en pantalla</h4>
+                <p>Al acercarse, el sistema recorta el auto, ubica su placa y muestra el texto leído al instante.</p>
+              </div>
+              <div class="demo-step">
+                <div class="model-badge accent-crimson" style="margin-bottom:8px;">03 · INFRACCIÓN</div>
+                <h4>Alerta automática</h4>
+                <p>Cuando un vehículo con placa leída supera el límite configurado, suena la alerta y se crea su boleta.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 7: BOLETA DE MULTA GENERADA (RECORTE PDF)
+           ===================================================== -->
+      <section class="slide" data-slide="7">
+        <div class="glow-orb"
+          style="width:600px;height:600px;background:var(--crimson);top:-140px;right:-100px;opacity:0.18;"></div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">07</span>Resultado Final</span>
+            <span class="slide-meta">Boleta de infracción en PDF</span>
+          </div>
+
+          <h2 class="reveal d1">Ejemplo de multa generada por la app</h2>
+
+          <div class="ticket-layout">
+            <!-- Muestra automáticamente multa.png / multa.jpg si existe o la captura elegida; si no, la vista exacta del PDF -->
+            <div class="pdf-frame-card reveal d2">
+              <img id="ticketImg" class="pdf-uploaded-img" src="./multa.jpg" alt="Boleta de infracción NBJ-26-10" />
+
+              <div id="ticketFallback" class="pdf-fallback">
+                <div class="pdf-header">
+                  <h3>BOLETA DE INFRACCIÓN · EXCESO DE VELOCIDAD</h3>
+                  <span>Folio RV-2026-784358 &nbsp;·&nbsp; 21/11/2026, 4:33:04 a.m.</span>
+                </div>
+                <div class="pdf-body">
+                  <div class="pdf-top-row">
+                    <div>
+                      <div style="font-size:14px;color:#475569;font-weight:600;">Placa detectada</div>
+                      <div class="pdf-plate-box">NBJ-26-10</div>
+                    </div>
+                    <div class="pdf-kv">
+                      Velocidad registrada: <strong>16 km/h</strong><br />
+                      Límite de la vía: <strong>10 km/h</strong><br />
+                      Exceso: <strong style="color:#be123c;">+6 km/h</strong><br />
+                      <strong>Sanción: $2,171 MXN</strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:14px;color:#475569;font-weight:600;">Evidencia fotográfica</div>
+                    <div class="pdf-evidence-box">
+                      <div class="pdf-evidence-placeholder">
+                        <div>
+                          <div style="font-family:var(--font-mono);font-size:13px;color:#fda4af;margin-bottom:8px;">
+                            EVIDENCIA DEL INFRACTOR</div>
+                          <div style="font-size:21px;font-weight:700;margin-bottom:6px;">Camioneta negra marcada en escena
+                          </div>
+                          <div style="font-size:15px;color:#94a3b8;">Incluye recuadro del vehículo, etiqueta de velocidad
+                            <strong style="color:#fda4af;">16 km/h</strong> y fecha exacta.</div>
+                        </div>
+                        <div
+                          style="flex-shrink:0;width:165px;height:125px;border:3px solid #fb7185;border-radius:10px;position:relative;background:rgba(251,113,133,0.12);display:grid;place-items:center;">
+                          <span
+                            style="position:absolute;top:-14px;left:8px;background:#e11d48;color:#fff;font-family:var(--font-mono);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;">16
+                            km/h</span>
+                          <span
+                            style="border:2px solid #34d399;border-radius:4px;padding:4px 10px;font-family:var(--font-mono);font-size:13px;background:#fff;color:#0f172a;font-weight:700;">NBJ-26-10</span>
+                        </div>
+                      </div>
+                      <div class="pdf-footer-strip">RADAR VIAL · 21/11/2026, 4:33:04 a.m. · Límite 10 km/h</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:14px;color:#475569;font-weight:600;">Recorte de la placa</div>
+                    <div class="pdf-crop-plate">
+                      <small>EDOMEX</small>
+                      <span>NBJ-26-10</span>
+                    </div>
+                  </div>
+
+                  <div class="pdf-disclaimer">Documento generado por un prototipo académico (Radar Vial · YOLO26). Sin
+                    validez oficial.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card reveal d3" style="display:flex;flex-direction:column;gap:24px;">
+              <div class="card-accent-top" style="background:var(--crimson)"></div>
+              <h3 style="font-family:var(--font-display);font-size:36px;">Qué contiene cada boleta</h3>
+              <ul class="list-clean" style="margin-top:0;gap:20px;">
+                <li><span class="bullet-icon">1</span>
+                  <div><strong>Folio, fecha y hora:</strong> registro automático de cuándo ocurrió la infracción.</div>
+                </li>
+                <li><span class="bullet-icon">2</span>
+                  <div><strong>Velocidad y sanción:</strong> muestra el límite de la calle, el exceso y el monto
+                    correspondiente.</div>
+                </li>
+                <li><span class="bullet-icon">3</span>
+                  <div><strong>Foto completa y recorte:</strong> guarda la foto del auto en la vía junto con el
+                    acercamiento de la placa.</div>
+                </li>
+                <li><span class="bullet-icon">4</span>
+                  <div><strong>Descarga directa en PDF:</strong> lista para guardar o imprimir desde la misma
+                    aplicación, con opción de corregir algún carácter antes de descargarla.</div>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =====================================================
+           SLIDE 8: CIERRE MINIMALISTA
+           ===================================================== -->
+      <section class="slide" data-slide="8">
+        <div class="glow-orb"
+          style="width:720px;height:720px;background:var(--amber);top:50%;left:50%;transform:translate(-50%,-50%);opacity:0.16;">
+        </div>
+
+        <div class="slide-inner">
+          <div class="slide-top">
+            <span class="kicker"><span class="kicker-num">08</span>Cierre</span>
+            <span class="slide-meta">Radar Vial</span>
+          </div>
+
+          <div class="closing-wrap">
+            <h1 class="closing-title reveal d1">¡Gracias por su<br /><span class="accent-amber">atención!</span></h1>
+
+            <a class="closing-link reveal d2" href="https://reconocimientodeplacas.netlify.app" target="_blank"
+              rel="noopener">
+              https://reconocimientodeplacas.netlify.app
+            </a>
+
+            <div class="team-names reveal d3" style="justify-content:center;font-size:32px;margin-top:8px;">
+              <span>Daniel Alvarez</span>
+              <span class="team-sep">·</span>
+              <span>Karol Burrola</span>
+              <span class="team-sep">·</span>
+              <span>Melina Gonzalez</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Controles fuera del escenario 1920x1080 -->
+  <nav class="deck-controls" aria-label="Controles de presentación">
+    <button class="ctrl-btn" id="btnPrev" title="Anterior (←)" aria-label="Diapositiva anterior">←</button>
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <span id="slideCounter">01 / 08</span>
+    <button class="ctrl-btn" id="btnNext" title="Siguiente (→ / Espacio)" aria-label="Siguiente diapositiva">→</button>
+    <button class="ctrl-btn" id="btnFull" title="Pantalla completa (F)" aria-label="Pantalla completa">⛶</button>
+  </nav>
+
+  <script>
+    /* ===========================================
+       SLIDE PRESENTATION CONTROLLER
+       =========================================== */
+    class SlidePresentation {
+      constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.stage = document.getElementById('deckStage');
+        this.counter = document.getElementById('slideCounter');
+        this.progress = document.getElementById('progressFill');
+        this.demoVideo = document.getElementById('demoVideo');
+        this.currentSlide = 0;
+        this.wheelLock = false;
+
+        this.setupStageScale();
+        this.setupControls();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupWheelNav();
+        this.showSlide(0);
+      }
+
+      setupStageScale() {
+        const scale = () => {
+          const factor = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+          const x = (window.innerWidth - 1920 * factor) / 2;
+          const y = (window.innerHeight - 1080 * factor) / 2;
+          this.stage.style.transform = `translate(${x}px, ${y}px) scale(${factor})`;
+        };
+        scale();
+        window.addEventListener('resize', scale);
+      }
+
+      setupControls() {
+        document.getElementById('btnPrev').addEventListener('click', () => this.prev());
+        document.getElementById('btnNext').addEventListener('click', () => this.next());
+        document.getElementById('btnFull').addEventListener('click', () => this.toggleFullscreen());
+      }
+
+      toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen?.().catch(() => { });
+        } else {
+          document.exitFullscreen?.().catch(() => { });
+        }
+      }
+
+      setupKeyboardNav() {
+        window.addEventListener('keydown', (e) => {
+          if (document.body.classList.contains('editing-mode') && document.activeElement?.isContentEditable) return;
+          if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+            if (document.activeElement?.tagName === 'VIDEO') return;
+            e.preventDefault();
+            this.next();
+          } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+            e.preventDefault();
+            this.prev();
+          } else if (e.key === 'Home') {
+            e.preventDefault();
+            this.showSlide(0);
+          } else if (e.key === 'End') {
+            e.preventDefault();
+            this.showSlide(this.slides.length - 1);
+          } else if (e.key === 'f' || e.key === 'F') {
+            this.toggleFullscreen();
+          }
+        });
+      }
+
+      setupTouchNav() {
+        let startX = 0;
+        window.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, { passive: true });
+        window.addEventListener('touchend', (e) => {
+          const dx = e.changedTouches[0].clientX - startX;
+          if (Math.abs(dx) > 55) dx < 0 ? this.next() : this.prev();
+        }, { passive: true });
+      }
+
+      setupWheelNav() {
+        window.addEventListener('wheel', (e) => {
+          if (this.wheelLock || Math.abs(e.deltaY) < 28) return;
+          this.wheelLock = true;
+          e.deltaY > 0 ? this.next() : this.prev();
+          setTimeout(() => { this.wheelLock = false; }, 520);
+        }, { passive: true });
+      }
+
+      next() { this.showSlide(this.currentSlide + 1); }
+      prev() { this.showSlide(this.currentSlide - 1); }
+
+      showSlide(index) {
+        this.currentSlide = Math.max(0, Math.min(index, this.slides.length - 1));
+        this.slides.forEach((slide, i) => {
+          const active = i === this.currentSlide;
+          slide.classList.toggle('active', active);
+          slide.classList.toggle('visible', active);
+        });
+
+        if (this.demoVideo) {
+          const isDemoSlide = this.slides[this.currentSlide].contains(this.demoVideo);
+          if (!isDemoSlide && !this.demoVideo.paused) this.demoVideo.pause();
+        }
+
+        const cur = String(this.currentSlide + 1).padStart(2, '0');
+        const tot = String(this.slides.length).padStart(2, '0');
+        this.counter.textContent = `${cur} / ${tot}`;
+        this.progress.style.width = `${((this.currentSlide + 1) / this.slides.length) * 100}%`;
+      }
+    }
+
+    /* ===========================================
+       IMAGEN REAL DE LA MULTA (Slide 7)
+       Carga ./multa.png automáticamente si existe, o permite elegirla una vez y guardarla
+       =========================================== */
+    (function setupTicketImage() {
+      const img = document.getElementById('ticketImg');
+      const fallback = document.getElementById('ticketFallback');
+      const input = document.getElementById('ticketFileInput');
+      const key = 'radar-vial-ticket-img-v1';
+
+      const showImage = (src) => {
+        img.src = src;
+        img.classList.add('has-img');
+        fallback.classList.add('hidden');
+      };
+
+      img.addEventListener('load', () => {
+        if (img.naturalWidth > 0) {
+          img.classList.add('has-img');
+          fallback.classList.add('hidden');
+        }
+      });
+      let triedPng = false;
+      img.addEventListener('error', () => {
+        if (!triedPng) {
+          triedPng = true;
+          img.src = './multa.png';
+          return;
+        }
+        img.classList.remove('has-img');
+        fallback.classList.remove('hidden');
+      });
+
+      if (img.complete && img.naturalWidth > 0) {
+        img.classList.add('has-img');
+        fallback.classList.add('hidden');
+      }
+    })();
+
+    /* ===========================================
+       INLINE TEXT EDITOR (E key or top-left hotzone)
+       =========================================== */
+    class InlineEditor {
+      constructor() {
+        this.isActive = false;
+        this.storageKey = 'radar-vial-deck-v2';
+        this.editToggle = document.getElementById('editToggle');
+        this.hotzone = document.querySelector('.edit-hotzone');
+        this.hideTimeout = null;
+        this.editableSelector = 'h1, h2, h3, h4, p, li, .team-names, .formula-main, .formula-sub, .example-chip, .callout-bar';
+
+        this.restoreSaved();
+        this.bindEvents();
+      }
+
+      bindEvents() {
+        this.editToggle.addEventListener('click', () => this.toggle());
+        this.hotzone.addEventListener('click', () => this.toggle());
+
+        this.hotzone.addEventListener('mouseenter', () => {
+          clearTimeout(this.hideTimeout);
+          this.editToggle.classList.add('show');
+        });
+        this.hotzone.addEventListener('mouseleave', () => {
+          this.hideTimeout = setTimeout(() => {
+            if (!this.isActive) this.editToggle.classList.remove('show');
+          }, 400);
+        });
+        this.editToggle.addEventListener('mouseenter', () => clearTimeout(this.hideTimeout));
+        this.editToggle.addEventListener('mouseleave', () => {
+          this.hideTimeout = setTimeout(() => {
+            if (!this.isActive) this.editToggle.classList.remove('show');
+          }, 400);
+        });
+
+        window.addEventListener('keydown', (e) => {
+          if ((e.key === 'e' || e.key === 'E') && !document.activeElement?.isContentEditable) {
+            e.preventDefault();
+            this.toggle();
+          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && this.isActive) {
+            e.preventDefault();
+            this.save();
+          }
+        });
+      }
+
+      toggle() {
+        this.isActive = !this.isActive;
+        document.body.classList.toggle('editing-mode', this.isActive);
+        this.editToggle.classList.toggle('active', this.isActive);
+        this.editToggle.textContent = this.isActive ? '💾 Listo (Ctrl+S)' : '✏️ Editar (E)';
+
+        document.querySelectorAll(this.editableSelector).forEach((el) => {
+          el.contentEditable = this.isActive ? 'true' : 'false';
+        });
+        if (!this.isActive) this.save();
+      }
+
+      save() {
+        const data = {};
+        document.querySelectorAll(this.editableSelector).forEach((el, idx) => {
+          data[idx] = el.innerHTML;
+        });
+        try { localStorage.setItem(this.storageKey, JSON.stringify(data)); } catch { }
+      }
+
+      restoreSaved() {
+        try {
+          const raw = localStorage.getItem(this.storageKey);
+          if (!raw) return;
+          const data = JSON.parse(raw);
+          document.querySelectorAll(this.editableSelector).forEach((el, idx) => {
+            if (data[idx] != null) el.innerHTML = data[idx];
+          });
+        } catch { }
+      }
+    }
+
+    new SlidePresentation();
+    new InlineEditor();
+  </script>
+</body>
+
+</html>
